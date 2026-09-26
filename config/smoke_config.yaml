@@ -1,0 +1,55 @@
+# Disaster Response Multi-Agent System - Smoke Test Configuration
+
+environment:
+  grid_size: [3, 3]
+  max_steps: 5
+  num_zones: 1
+  num_depots: 1
+  
+  zone_severities: [2]
+  
+  casualty_ranges:
+    2: [3, 3]
+    
+  trapped_ranges:
+    2: [2, 2]
+    
+  depot_stock:
+    ambulances: 2
+    rescue_teams: 2
+    supply_units: 10
+
+  agent_counts:
+    medical: 1
+    rescue: 1
+    logistics: 1
+
+  time_thresholds:
+    medical_treat_delay: 5
+    rescue_delay: 5
+
+  seed: 123
+
+rewards:
+  medical:
+    treated_on_time: 10.0
+    delay_penalty: 1.0
+    lost_casualty_penalty: 20.0
+
+  rescue:
+    rescued_person: 15.0
+    delay_penalty: 0.5
+    unrescued_penalty: 10.0
+
+  logistics:
+    demand_fulfilled: 8.0
+    shortage_penalty: 2.0
+    waste_penalty: 5.0
+
+db:
+  path: "smoke_metrics.db"
+
+training:
+  total_timesteps: 100
+  learning_rate: 0.0003
+  checkpoint_dir: "checkpoints"
