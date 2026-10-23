@@ -80,7 +80,7 @@ class MultiAgentGymWrapper(gym.Env):
 
 
 class DBMetricsLoggingCallback(BaseCallback):
-    """Callback to log MARL training episode metrics directly to SQLite DB."""
+    """Callback to log MARL training episode metrics directly to MongoDB."""
     def __init__(self, db_logger: DBLogger, run_id: str, verbose=0):
         super().__init__(verbose)
         self.db_logger = db_logger
@@ -125,7 +125,7 @@ def train_marl(config_path: str = "config/default_config.yaml", timesteps: int =
         config["training"]["total_timesteps"] = timesteps
 
     seed = config["environment"].get("seed", 42)
-    db_path = config.get("db", {}).get("path", "disaster_metrics.db")
+    db_cfg = config.get("db", {})
     checkpoint_dir = config.get("training", {}).get("checkpoint_dir", "checkpoints")
 
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -135,7 +135,7 @@ def train_marl(config_path: str = "config/default_config.yaml", timesteps: int =
     gym_env = MultiAgentGymWrapper(base_env)
 
     # Initialize DB Logger & run registration (NFR7)
-    db = DBLogger(db_path)
+    db = DBLogger(db_cfg)
     run_id = db.start_run(run_type="marl_training", config=config, notes="PPO Multi-Agent Training")
 
     # Initialize SB3 PPO model

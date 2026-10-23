@@ -1,34 +1,40 @@
 """
 Scenario Generator for Disaster Response Coordination.
-Kept separate from the PettingZoo environment class to allow independent tuning of scenario randomization.
+Generates deterministic initial states using local Random/NumPy Generators (FR8, NFR2).
 """
+
 import random
 import numpy as np
+from typing import Dict, Any, List
 
 def generate_scenario(config: dict, seed: int = None, fixed: bool = False) -> dict:
     """
-    Generates scenario initial state including grid, zones, depots, and agent positions.
+    Generates initial environment scenario using strictly local RNG instances.
     
     Args:
-        config (dict): Configuration dictionary containing environment parameters.
-        seed (int, optional): Random seed for reproducibility.
-        fixed (bool): If True, generates a deterministic scenario (ideal for smoke testing).
+        config (dict): Configuration dictionary.
+        seed (int, optional): Seed for exact reproducibility.
+        fixed (bool): If True, generates a small deterministic smoke scenario.
         
     Returns:
-        dict: Initial scenario state dictionary.
+        dict: Complete environment initial state structure.
     """
-    if seed is not None:
-        random.seed(seed)
-        np.random.seed(seed)
-
     env_cfg = config.get("environment", {})
+    actual_seed = seed if seed is not None else env_cfg.get("seed", 42)
+    
+    # Strictly local random generators (NFR2 / FR8 requirement 7)
+    np_rng = np.random.default_rng(actual_seed)
+    py_rng = random.Random(actual_seed)
+
     grid_w, grid_h = env_cfg.get("grid_size", [10, 10])
     num_zones = env_cfg.get("num_zones", 4)
     num_depots = env_cfg.get("num_depots", 2)
     agent_counts = env_cfg.get("agent_counts", {"medical": 2, "rescue": 2, "logistics": 2})
+    inaccessible_prob = env_cfg.get("inaccessible_prob", 0.2)
+    depot_stock_cfg = env_cfg.get("depot_stock", {"ambulances": 5, "rescue_teams": 5, "supply_units": 20})
 
     if fixed:
-        # Deterministic 3x3 or grid scenario for smoke test
+        # Deterministic fixed scenario for smoke testing
         zones = [
             {
                 "id": 0,
@@ -37,8 +43,14 @@ def generate_scenario(config: dict, seed: int = None, fixed: bool = False) -> di
                 "casualty_count": 3,
                 "trapped_count": 2,
                 "casualties_treated": 0,
+                "casualties_lost": 0,
                 "accessibility": True,
-                "supplies_delivered": 0
+                "supply_demand": 5.0,
+                "supplies_delivered": 0,
+                "casualty_queue": [
+                    {"id": f"cas_0_{c}", "spawn_step": 0, "treated_step": None, "lost": False}
+                    for c in range(3)
+                ]
             }
         ]
         depots = [
@@ -47,59 +59,84 @@ def generate_scenario(config: dict, seed: int = None, fixed: bool = False) -> di
                 "pos": (0, 0),
                 "ambulances": 5,
                 "rescue_teams": 5,
-                "supply_units": 20
+                "supply_units": 20,
+                "max_ambulances": 5,
+                "max_rescue_teams": 5,
+                "max_supply_units": 20
             }
         ]
         agents = {
-            "medical_0": {"pos": (0, 0), "role": "medical", "status": 0, "carrying": 0},
-            "rescue_0": {"pos": (0, 0), "role": "rescue", "status": 0},
-            "logistics_0": {"pos": (0, 0), "role": "logistics", "supply_payload": 10}
+            "medical_0": {
+                "pos": (0, 0), "role": "medical", "status": 0, "target_zone": -1,
+                "has_ambulance": True, "assigned_depot_id": 0, "carrying": 0, "progress_steps": 0
+            },
+            "rescue_0": {
+                "pos": (0, 0), "role": "rescue", "status": 0, "target_zone": -1,
+                "has_rescue_team": True, "assigned_depot_id": 0, "progress_steps": 0
+            },
+            "logistics_0": {
+                "pos": (0, 0), "role": "logistics", "status": 0, "target_zone": -1,
+                "supply_payload": 10, "assigned_depot_id": 0, "progress_steps": 0
+            }
         }
         return {
             "grid_size": (grid_w, grid_h),
             "zones": zones,
             "depots": depots,
             "agents": agents,
-            "step_count": 0
+            "step_count": 0,
+            "seed": actual_seed
         }
 
-    # Dynamic / randomized scenario generation
-    # Place depots at corners/edges
-    depots = []
+    # Generate Depots at corners/edges
     depot_positions = [(0, 0), (grid_w - 1, grid_h - 1), (0, grid_h - 1), (grid_w - 1, 0)]
+    depots = []
     for i in range(num_depots):
         pos = depot_positions[i % len(depot_positions)]
-        depot_stock = env_cfg.get("depot_stock", {"ambulances": 5, "rescue_teams": 5, "supply_units": 20})
         depots.append({
             "id": i,
             "pos": pos,
-            "ambulances": depot_stock["ambulances"],
-            "rescue_teams": depot_stock["rescue_teams"],
-            "supply_units": depot_stock["supply_units"]
+            "ambulances": depot_stock_cfg["ambulances"],
+            "rescue_teams": depot_stock_cfg["rescue_teams"],
+            "supply_units": depot_stock_cfg["supply_units"],
+            "max_ambulances": depot_stock_cfg["ambulances"],
+            "max_rescue_teams": depot_stock_cfg["rescue_teams"],
+            "max_supply_units": depot_stock_cfg["supply_units"]
         })
 
-    # Place disaster zones randomly on grid (avoiding depots)
+    # Generate Zones randomly on grid avoiding depot locations
     occupied_positions = set(d["pos"] for d in depots)
     zones = []
     zone_severities = env_cfg.get("zone_severities", [1, 2, 3])
     casualty_ranges = env_cfg.get("casualty_ranges", {1: [1, 3], 2: [4, 6], 3: [7, 10]})
     trapped_ranges = env_cfg.get("trapped_ranges", {1: [1, 2], 2: [2, 4], 3: [4, 7]})
 
+    cas_global_idx = 0
     for i in range(num_zones):
         while True:
-            zx = random.randint(0, grid_w - 1)
-            zy = random.randint(0, grid_h - 1)
+            zx = py_rng.randint(0, grid_w - 1)
+            zy = py_rng.randint(0, grid_h - 1)
             if (zx, zy) not in occupied_positions:
                 occupied_positions.add((zx, zy))
                 break
 
-        severity = random.choice(zone_severities)
-        c_min, c_max = casualty_ranges.get(severity, [2, 5])
-        t_min, t_max = trapped_ranges.get(severity, [1, 3])
-        
-        cas_count = random.randint(c_min, c_max)
-        trap_count = random.randint(t_min, t_max)
-        accessible = random.random() > 0.2  # 80% accessible, 20% harder
+        severity = py_rng.choice(zone_severities)
+        c_min, c_max = casualty_ranges.get(severity, casualty_ranges.get(str(severity), [2, 5]))
+        t_min, t_max = trapped_ranges.get(severity, trapped_ranges.get(str(severity), [1, 3]))
+
+        cas_count = py_rng.randint(c_min, c_max)
+        trap_count = py_rng.randint(t_min, t_max)
+        accessible = py_rng.random() >= inaccessible_prob
+
+        cas_queue = []
+        for _ in range(cas_count):
+            cas_queue.append({
+                "id": f"cas_{cas_global_idx}",
+                "spawn_step": 0,
+                "treated_step": None,
+                "lost": False
+            })
+            cas_global_idx += 1
 
         zones.append({
             "id": i,
@@ -108,11 +145,14 @@ def generate_scenario(config: dict, seed: int = None, fixed: bool = False) -> di
             "casualty_count": cas_count,
             "trapped_count": trap_count,
             "casualties_treated": 0,
+            "casualties_lost": 0,
             "accessibility": accessible,
-            "supplies_delivered": 0
+            "supply_demand": float(cas_count + trap_count),
+            "supplies_delivered": 0,
+            "casualty_queue": cas_queue
         })
 
-    # Initialize agents starting at depots
+    # Generate Agents
     agents = {}
     for role, count in agent_counts.items():
         for idx in range(count):
@@ -121,12 +161,21 @@ def generate_scenario(config: dict, seed: int = None, fixed: bool = False) -> di
             agent_dict = {
                 "pos": start_depot["pos"],
                 "role": role,
-                "status": 0
+                "status": 0,
+                "target_zone": -1,
+                "assigned_depot_id": start_depot["id"],
+                "progress_steps": 0
             }
+            
             if role == "medical":
+                # Medical agents start without ambulance reserved until requested or at depot
+                agent_dict["has_ambulance"] = False
                 agent_dict["carrying"] = 0
+            elif role == "rescue":
+                agent_dict["has_rescue_team"] = False
             elif role == "logistics":
-                agent_dict["supply_payload"] = 10
+                agent_dict["supply_payload"] = 0
+                
             agents[agent_id] = agent_dict
 
     return {
@@ -134,5 +183,6 @@ def generate_scenario(config: dict, seed: int = None, fixed: bool = False) -> di
         "zones": zones,
         "depots": depots,
         "agents": agents,
-        "step_count": 0
+        "step_count": 0,
+        "seed": actual_seed
     }

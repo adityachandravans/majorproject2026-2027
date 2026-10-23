@@ -1,22 +1,22 @@
 # Disaster Response Multi-Agent System - Smoke Test Configuration
 
 environment:
-  grid_size: [3, 3]
-  max_steps: 5
-  num_zones: 1
+  grid_size: [5, 5]
+  max_steps: 15
+  num_zones: 2
   num_depots: 1
-  
-  zone_severities: [2]
-  
+
+  zone_severities: [1, 2]
   casualty_ranges:
-    2: [3, 3]
-    
+    1: [1, 2]
+    2: [2, 3]
   trapped_ranges:
-    2: [2, 2]
-    
+    1: [1, 2]
+    2: [2, 3]
+
   depot_stock:
-    ambulances: 2
-    rescue_teams: 2
+    ambulances: 3
+    rescue_teams: 3
     supply_units: 10
 
   agent_counts:
@@ -28,7 +28,15 @@ environment:
     medical_treat_delay: 5
     rescue_delay: 5
 
-  seed: 123
+  inaccessible_prob: 0.1
+  inaccessible_cost: 2
+  rescue_duration: 1
+  demand_growth_rate: 0.1
+  seed: 42
+
+comms:
+  comm_enabled: true
+  comm_dropout_prob: 0.0
 
 rewards:
   medical:
@@ -46,10 +54,23 @@ rewards:
     shortage_penalty: 2.0
     waste_penalty: 5.0
 
+  team_reward_weight: 0.2
+
 db:
-  path: "smoke_metrics.db"
+  uri: "mongodb://localhost:27017/"
+  database: "smoke_metrics"
 
 training:
-  total_timesteps: 100
-  learning_rate: 0.0003
+  total_timesteps: 2000
+  learning_rate: 0.001
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_eps: 0.2
+  entropy_coef: 0.01
+  value_coef: 0.5
+  max_grad_norm: 0.5
+  epochs: 4
+  batch_size: 16
+  rollout_length: 32
   checkpoint_dir: "checkpoints"
+  checkpoint_freq: 10

@@ -17,12 +17,9 @@ def test_smoke_pipeline():
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
 
-    db_path = config.get("db", {}).get("path", "smoke_metrics.db")
-    if os.path.exists(db_path):
-        try:
-            os.remove(db_path)
-        except Exception:
-            pass
+    db_cfg = config.get("db", {})
+    db = DBLogger(db_cfg)
+    db.clear_database()
 
     # 1. Initialize environment with fixed scenario mode
     env = DisasterResponseEnv(config, fixed_scenario=True)
@@ -54,7 +51,7 @@ def test_smoke_pipeline():
     assert "task_completion_rate" in metrics, "Missing task_completion_rate in metrics"
 
     # 5. Verify database logging
-    db = DBLogger(db_path)
+    db = DBLogger(db_cfg)
     run_id = db.start_run(run_type="smoke_baseline", config=config, notes="Smoke test run")
     db.log_episode(run_id, episode_num=1, metrics=metrics)
 

@@ -1,63 +1,109 @@
 """
-Matplotlib Plotter helper to visualize training and evaluation metrics from SQLite DB logs.
+Matplotlib Plotting Helpers for Evaluation and Training Results (FR9, Section 8).
+Generates learning curves, metric comparison bar charts, and response-time box plots.
 """
+
+import os
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import pandas as pd
-from metrics_logging.db_logger import DBLogger
+import numpy as np
+from typing import Dict, List
 
-def plot_run_metrics(db_path: str, run_id: str, save_path: str = None):
-    """
-    Queries SQLite database for episode metrics of run_id and generates a 4-panel matplotlib chart.
-    """
-    db = DBLogger(db_path)
-    df = db.get_run_episodes(run_id)
-
+def plot_learning_curve(df: pd.DataFrame, output_path: str = "results/learning_curve.png"):
+    """Plots training learning curve (reward and losses vs update) with moving average."""
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     if df.empty:
-        print(f"No episode data found for run_id: {run_id}")
-        return None
+        return
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
-    fig.suptitle(f"Episode Metrics Progression (Run: {run_id})", fontsize=14, weight='bold')
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
 
-    # Panel 1: Total Reward
-    axes[0, 0].plot(df["episode_num"], df["total_reward"], marker='o', color='b', label='Total Reward')
-    axes[0, 0].plot(df["episode_num"], df["medical_reward"], linestyle='--', color='g', label='Medical')
-    axes[0, 0].plot(df["episode_num"], df["rescue_reward"], linestyle='--', color='orange', label='Rescue')
-    axes[0, 0].plot(df["episode_num"], df["logistics_reward"], linestyle='--', color='purple', label='Logistics')
-    axes[0, 0].set_title("Reward per Episode & Role")
-    axes[0, 0].set_xlabel("Episode")
-    axes[0, 0].set_ylabel("Reward")
-    axes[0, 0].legend()
-    axes[0, 0].grid(True)
+    updates = pd.to_numeric(df["update_num"], errors="coerce").values
+    rewards = pd.to_numeric(df["mean_reward"], errors="coerce").values
 
-    # Panel 2: Task Completion Rate
-    axes[0, 1].plot(df["episode_num"], df["task_completion_rate"] * 100.0, marker='s', color='g')
-    axes[0, 1].set_title("Task Completion Rate (%)")
-    axes[0, 1].set_xlabel("Episode")
-    axes[0, 1].set_ylabel("Completion Rate (%)")
-    axes[0, 1].set_ylim(0, 105)
-    axes[0, 1].grid(True)
+    ax1.plot(updates, rewards, alpha=0.3, color="blue", label="Raw Mean Reward")
+    if len(rewards) >= 5:
+        window = min(20, len(rewards))
+        smooth = pd.Series(rewards).rolling(window=window, min_periods=1).mean().values
+        ax1.plot(updates, smooth, color="navy", linewidth=2, label=f"{window}-Update Moving Avg")
 
-    # Panel 3: Response Time
-    axes[1, 0].plot(df["episode_num"], df["avg_response_time"], marker='^', color='r')
-    axes[1, 0].set_title("Average Response Time (Steps)")
-    axes[1, 0].set_xlabel("Episode")
-    axes[1, 0].set_ylabel("Steps")
-    axes[1, 0].grid(True)
+    ax1.set_ylabel("Episode Reward")
+    ax1.set_title("MAPPO CTDE Training Learning Curve")
+    ax1.grid(True, linestyle="--", alpha=0.6)
+    ax1.legend()
 
-    # Panel 4: Coordination Efficiency & Resource Utilization
-    axes[1, 1].plot(df["episode_num"], df["coordination_efficiency"] * 100.0, marker='d', color='purple', label='Coordination Efficiency (%)')
-    axes[1, 1].plot(df["episode_num"], df["resource_utilization_rate"] * 100.0, marker='v', color='teal', label='Resource Utilization (%)')
-    axes[1, 1].set_title("Efficiency & Utilization Metrics")
-    axes[1, 1].set_xlabel("Episode")
-    axes[1, 1].set_ylabel("Percentage (%)")
-    axes[1, 1].legend()
-    axes[1, 1].grid(True)
+    if "actor_loss" in df and "critic_loss" in df:
+        a_loss = pd.to_numeric(df["actor_loss"], errors="coerce").values
+        c_loss = pd.to_numeric(df["critic_loss"], errors="coerce").values
+        ax2.plot(updates, a_loss, color="red", label="Actor Loss", alpha=0.8)
+        ax2.plot(updates, c_loss, color="orange", label="Critic Loss", alpha=0.8)
+        ax2.set_ylabel("Loss")
+        ax2.set_xlabel("Training Updates")
+        ax2.grid(True, linestyle="--", alpha=0.6)
+        ax2.legend()
 
     plt.tight_layout()
+    plt.savefig(output_path, dpi=300)
+    plt.close(fig)
+    print(f"Saved learning curve plot to {output_path}")
 
-    if save_path:
-        plt.savefig(save_path, dpi=300)
-        print(f"Metrics plot saved to {save_path}")
+def plot_metric_bars(df: pd.DataFrame, output_path: str = "results/policy_comparison_bars.png"):
+    """Bar chart comparing policies across key coordination metrics."""
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    if df.empty:
+        return
 
-    return fig
+    metrics_to_plot = ["task_completion_rate", "coordination_efficiency", "resource_utilization_rate"]
+    policies = df["policy"].unique()
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    x = np.arange(len(metrics_to_plot))
+    width = 0.25
+
+    for idx, policy in enumerate(policies):
+        p_df = df[df["policy"] == policy]
+        means = [p_df[m].mean() for m in metrics_to_plot]
+        stds = [p_df[m].std() for m in metrics_to_plot]
+        ax.bar(x + idx * width, means, width, yerr=stds, capsize=5, label=policy.upper())
+
+    ax.set_ylabel("Score / Rate")
+    ax.set_title("Policy Performance Comparison (Mean ± Std)")
+    ax.set_xticks(x + width * (len(policies) - 1) / 2)
+    ax.set_xticklabels(["Task Completion", "Coordination Eff.", "Resource Util."])
+    ax.set_ylim(0, 1.1)
+    ax.grid(True, linestyle="--", alpha=0.5, axis="y")
+    ax.legend()
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300)
+    plt.close(fig)
+    print(f"Saved policy comparison bar chart to {output_path}")
+
+def plot_response_time_boxplot(data_dict: Dict[str, List[float]], output_path: str = "results/response_time_boxplot.png"):
+    """Boxplot comparing casualty response times across policies."""
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    if not data_dict:
+        return
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    labels = list(data_dict.keys())
+    values = [data_dict[k] for k in labels]
+
+    ax.boxplot(values, labels=[l.upper() for l in labels], patch_artist=True)
+    ax.set_ylabel("Response Time (Steps)")
+    ax.set_title("Per-Casualty Response Time Distribution")
+    ax.grid(True, linestyle="--", alpha=0.5, axis="y")
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300)
+    plt.close(fig)
+    print(f"Saved response time boxplot to {output_path}")
+
+def plot_run_metrics(df: pd.DataFrame, output_path: str = "results/run_metrics.png"):
+    """Alias helper for plotting run metric bar charts."""
+    if "policy" in df:
+        plot_metric_bars(df, output_path)
+    else:
+        plot_learning_curve(df, output_path)
+

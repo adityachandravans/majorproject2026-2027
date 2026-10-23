@@ -1,119 +1,154 @@
 # Multi-Agent AI System for Disaster Response Coordination
 
-A MARL-ready (Multi-Agent Reinforcement Learning) system for disaster response coordination built with **PettingZoo (ParallelEnv)**, **Stable-Baselines3 (PPO)**, **SQLite**, and **Streamlit**.
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
+[![PettingZoo](https://img.shields.io/badge/PettingZoo-ParallelEnv-green.svg)](https://pettingzoo.farama.org/)
+[![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688.svg)](https://fastapi.tiangolo.com/)
+[![React 18](https://img.shields.io/badge/Frontend-React_18_%2B_Vite-61dafb.svg)](https://reactjs.org/)
 
-This codebase represents **Phase 1, Phase 2, and early Phase 3** of the 12-week SRS timeline (40% B.Tech Final Year Project milestone).
+An end-to-end Multi-Agent Reinforcement Learning (MARL) framework for disaster response coordination built with **PettingZoo ParallelEnv**, **PyTorch MAPPO (Centralized Training with Decentralized Execution)**, **FastAPI + WebSockets**, and an interactive **React 18 + Vite + TypeScript SVG Dashboard**.
 
 ---
 
-## 🏗️ Architecture & Tech Stack
+## 🏗️ Architecture & Stack Overview
 
-| Component | Framework / Library | Justification |
+```
+                        +---------------------------------------+
+                        |   React 18 + Vite SVG Frontend        |
+                        |   (Live Grid, Charts, Controls)       |
+                        +-------------------+-------------------+
+                                            |  WebSocket / REST
+                                            v
+                        +---------------------------------------+
+                        |      FastAPI + Uvicorn Backend        |
+                        | (Simulation Manager, CORS, Latency)   |
+                        +-------------------+-------------------+
+                                            |
+                +---------------------------+---------------------------+
+                |                                                       |
+                v                                                       v
++-------------------------------+                       +-------------------------------+
+|  MARL Engine (MAPPO CTDE)     |                       | PettingZoo Disaster Env       |
+|  - Role Actors (Medical/      |                       | - Depots & Stock Conservation |
+|    Rescue/Logistics)          |                       | - Step-by-Step Manhattan Move |
+|  - Centralized Critic V(s)    |                       | - Inter-Agent Comms Layer     |
++---------------+---------------+                       +---------------+---------------+
+                |                                                       |
+                +---------------------------+---------------------------+
+                                            |
+                                            v
+                        +---------------------------------------+
+                        |   MongoDB Logger (disaster_metrics)   |
+                        |   (Runs, Episodes, Training Curve)    |
+                        +---------------------------------------+
+```
+
+---
+
+## 📁 Project Directory Structure
+
+```
+multiagentmodels/
+├── config/            # YAML configurations (default_config.yaml, smoke_config.yaml)
+├── env/               # DisasterResponseEnv, scenario_gen.py, comms.py
+├── agents/            # MedicalAgent, RescueAgent, LogisticsAgent role implementations
+├── baseline/          # Greedy rule-based policy & Random policy implementations
+├── marl/              # MAPPO CTDE (networks.py, mappo.py, buffer.py, train.py, evaluate.py, inference.py)
+├── metrics_logging/   # MongoDB DBLogger schema & Matplotlib plotter helpers
+├── backend/           # FastAPI main.py, simulation_manager.py, schemas.py (Pydantic)
+├── frontend/          # React 18 + Vite + TypeScript + SVG Grid + Recharts App
+├── tests/             # Comprehensive pytest & vitest test suite
+├── checkpoints/       # Saved PyTorch MAPPO model checkpoints (.pt)
+├── results/           # Benchmark comparison CSVs, markdown summaries, and plot PNGs
+├── docs/              # REPORT_RESULTS.md (Traceability Matrix) & DEMO_SCRIPT.md
+├── Makefile           # Multi-platform build & run automation
+├── requirements.txt   # Pinned Python dependencies
+└── README.md          # System documentation & execution guide
+```
+
+---
+
+## 🤖 Agent Roles & Action Spaces
+
+| Role | Actions | Reward Rules |
 | :--- | :--- | :--- |
-| **Environment** | PettingZoo (`ParallelEnv` API) | Native multi-agent parallel execution environment API. |
-| **RL Framework** | Stable-Baselines3 + Custom Wrapper | **Choice Rationale:** SB3 PPO with a centralized multi-agent joint-action wrapper was chosen over RLlib to avoid heavy Ray dependencies, ensure clean cross-platform installation on Windows, and provide an instant, robust training loop. |
-| **Dashboard** | Streamlit | Minimal, fast interactive web UI for live grid playback and metric visualization. |
-| **Logging** | SQLite (`sqlite3`) | Persistent storage of runs and per-episode coordination metrics. |
-| **Config** | PyYAML (`config/default_config.yaml`) | Centralized scenario and hyperparameter configuration. |
-
----
-
-## 📁 Repository Structure
-
-```
-/config/           - Default and smoke test YAML configurations
-/env/              - DisasterResponseEnv (PettingZoo ParallelEnv) & Scenario Generator
-/agents/           - MedicalAgent, RescueAgent, LogisticsAgent role implementations
-/baseline/         - Greedy rule-based policy implementation & runner
-/metrics_logging/  - SQLite DBLogger schema & matplotlib plotter helper
-/training/         - MARL PPO training script & custom Gymnasium joint wrapper
-/dashboard/        - Streamlit interactive application
-/tests/            - End-to-end smoke test script
-requirements.txt   - Pinned dependencies
-README.md          - System documentation & execution guide
-```
-
----
-
-## 🤖 Agent Specifications & Reward Formulas (Section 5.2, Table 2)
-
-### 1. Medical Agent (`agents/medical.py`)
-* **Observation:** Casualty locations, casualty severities (1-3), ambulance availability, agent position, status.
-* **Action Space (`Discrete(num_zones + 2)`):**
-  * `0 .. num_zones-1`: Dispatch/move to target zone.
-  * `num_zones`: Treat casualty at current zone.
-  * `num_zones + 1`: Transport casualty to hospital/depot.
-* **Reward Formula:**
-  $$\text{Reward} = +10.0 \times \text{Casualties Treated (on time)} - 1.0 \times \text{Delay Steps} - 20.0 \times \text{Lost Casualties}$$
-
-### 2. Rescue Agent (`agents/rescue.py`)
-* **Observation:** Trapped population count, terrain accessibility, agent position, status.
-* **Action Space (`Discrete(num_zones + 2)`):**
-  * `0 .. num_zones-1`: Move to target zone.
-  * `num_zones`: Perform rescue operation (frees trapped population into casualty pool).
-  * `num_zones + 1`: Request backup from depot.
-* **Reward Formula:**
-  $$\text{Reward} = +15.0 \times \text{Rescued Persons} - 0.5 \times \text{Trapped Population Remaining} - 10.0 \times \text{Unrescued Penalty}$$
-
-### 3. Logistics Agent (`agents/logistics.py`)
-* **Observation:** Depot stock levels (ambulances, rescue teams, supplies), zone supply demand, payload position.
-* **Action Space (`Discrete(num_zones + num_depots + 1)`):**
-  * `0 .. num_zones-1`: Deliver supplies to zone.
-  * `num_zones .. num_zones + num_depots - 1`: Restock at depot.
-  * `num_zones + num_depots`: Idle.
-* **Reward Formula:**
-  $$\text{Reward} = +8.0 \times \text{Supplies Delivered (Active Demand)} - 2.0 \times \text{Shortage Penalty} - 5.0 \times \text{Wasted Delivery}$$
+| **Medical Agent** | `0..N-1`: Move to Zone<br>`N`: Treat Casualty<br>`N+1`: Transport to Hospital | $+10.0$ on-time treatment<br>$-1.0 \times \text{delay}$ step penalty<br>$-20.0$ lost casualty penalty |
+| **Rescue Agent** | `0..N-1`: Move to Zone<br>`N`: Perform Rescue<br>`N+1`: Return Team to Depot | $+15.0$ per rescued person<br>$-0.5$ per remaining trapped person/step<br>$-10.0$ unrescued penalty at end |
+| **Logistics Agent** | `0..N-1`: Deliver Supplies to Zone<br>`N..N+D-1`: Restock at Depot<br>`N+D`: Idle | $+8.0$ demand fulfilled<br>$-2.0 \times \text{shortage}$ penalty<br>$-5.0$ wasted delivery penalty |
 
 ---
 
 ## ⚡ Quickstart & Execution Guide
 
 ### 1. Installation
-Install the pinned dependencies:
+
+Install Python dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Run Smoke Test (Section 6)
-Executes a fixed 3x3 scenario (1 zone, 1 agent per role, 5 steps max) end-to-end to verify environment, baseline policy, and SQLite logging:
+Install React frontend dependencies:
 ```bash
-python tests/test_smoke.py
-```
-*(Or via pytest: `python -m pytest tests/test_smoke.py`)*
-
-### 3. Run Baseline Policy Demo
-Run a full episode using the rule-based greedy baseline:
-```bash
-python -c "import yaml; from env.disaster_env import DisasterResponseEnv; from baseline.greedy_policy import GreedyPolicy, run_baseline_episode; from metrics_logging.db_logger import DBLogger; config = yaml.safe_load(open('config/default_config.yaml')); env = DisasterResponseEnv(config); policy = GreedyPolicy(config); db = DBLogger(config['db']['path']); metrics = run_baseline_episode(env, policy); run_id = db.start_run('baseline', config, 'Baseline Demo'); db.log_episode(run_id, 1, metrics); print('Baseline execution completed! Total reward:', metrics['total_reward'])"
+cd frontend && npm install && npm run build && cd ..
 ```
 
-### 4. Run MARL PPO Training Pipeline (Section 7)
-Train the multi-agent system for a short smoke training run (500 timesteps) or full training:
+### 2. Run Test Suite
+Run end-to-end Python pytest and frontend Vitest suites:
 ```bash
-python training/train_marl.py
+python -m pytest -o pythonpath=.
+cd frontend && npm test && cd ..
 ```
-This saves model checkpoints in `/checkpoints/` and logs episode metrics to `disaster_metrics.db`.
+*(Or via Makefile: `make test`)*
 
-### 5. Launch Interactive Streamlit Dashboard (Section 5.4)
-Launch the interactive web visualization dashboard:
+### 3. One-Command Demo Launch
+Launch the complete system (FastAPI backend + embedded React frontend at `http://localhost:8000`):
 ```bash
-streamlit run dashboard/app.py
+python scripts/demo.py
 ```
-* View color-coded disaster zones (Severity 1-3), agent positions, and depot stock levels.
-* Step through episodes using the interactive step playback slider.
-* Trigger live baseline episodes with one click.
-* Inspect line charts of Total Reward, Task Completion Rate, Response Time, and Coordination Efficiency over episodes.
+*(Or via Makefile: `make demo`)*
+
+### 4. Train MAPPO (CTDE)
+Train multi-agent PPO models from scratch or resume:
+```bash
+# Smoke test training (2,000 steps)
+python marl/train.py --smoke
+
+# Full training (200,000 steps)
+python marl/train.py --timesteps 200000
+
+# Resume training from latest checkpoint
+python marl/train.py --resume
+```
+
+### 5. Benchmark Evaluation
+Evaluate MAPPO vs Greedy Baseline vs Random Policy across identical seeds:
+```bash
+python marl/evaluate.py --episodes 100
+```
+Outputs `results/comparison.csv`, `results/summary.md`, and plot PNGs.
 
 ---
 
-## 📊 SQLite Metrics Schema (Section 8, FR7)
-Database file: `disaster_metrics.db`
-* **`runs` Table:** `run_id`, `run_type` (`baseline` | `marl_training`), `config_used`, `timestamp`, `notes`
-* **`episodes` Table:** `episode_id`, `run_id`, `episode_num`, `total_reward`, `avg_response_time`, `resource_utilization_rate`, `casualties_served`, `task_completion_rate`, `coordination_efficiency`, `medical_reward`, `rescue_reward`, `logistics_reward`
+## 🔌 API Reference (FastAPI REST & WebSocket)
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/api/config/default` | `GET` | Returns default YAML scenario configuration. |
+| `/api/simulations` | `POST` | Creates a new simulation instance (`policy`, `seed`, `speed`). |
+| `/api/simulations/{id}/state` | `GET` | Returns current state dictionary (`render_state()`). |
+| `/api/simulations/{id}/start` | `POST` | Starts background asyncio step loop. |
+| `/api/simulations/{id}/pause` | `POST` | Pauses background simulation loop. |
+| `/api/simulations/{id}/step` | `POST` | Executes a single step synchronously. |
+| `/api/simulations/{id}/policy` | `POST` | Switches policy mid-run (`marl`, `baseline`, `random`). |
+| `/api/checkpoints` | `GET` | Lists available PyTorch model checkpoints. |
+| `/api/runs` | `GET` | Queries registered runs from MongoDB. |
+| `/api/compare` | `POST` | Runs side-by-side MARL vs Baseline comparison on identical seed. |
+| `/ws/simulations/{id}` | `WS` | Real-time WebSocket streaming of simulation frames & metrics. |
 
 ---
 
-## 🎓 Evaluator Defense Notes
-* **Separation of Concerns:** Scenario generation is isolated in `env/scenario_gen.py`, allowing independent tuning of casualty ranges and zone severities.
-* **Coordination Efficiency Metric:** Quantified as $1.0 - \frac{\text{duplicated actions}}{\text{total agent actions}}$, penalizing redundant agent actions at the same location.
-* **MARL Multi-Agent Wrapper:** Implements joint observation vector concatenation and multi-discrete action mapping to interface PettingZoo directly with SB3 PPO.
+## 🛠️ Design Decisions & Deviations from Legacy SRS
+
+1. **Frontend Architecture:** Replaced legacy Streamlit (`dashboard/app.py`) with a modern **React 18 + Vite + TypeScript** web application with SVG grid rendering and real-time WebSocket streaming.
+2. **MARL Framework:** Replaced legacy SB3 joint-action wrapper with a custom PyTorch **MAPPO CTDE** implementation supporting parameter-sharing per role, action masking, and decentralized execution.
+3. **Resource Management:** Enforced explicit depot stock decrement/replenishment without negative values, requiring medical agents to hold ambulances and rescue agents to hold rescue teams.
+4. **Local RNG Seeding:** Used `np.random.default_rng(seed)` and `random.Random(seed)` strictly local instances to guarantee exact scenario determinism across runs.

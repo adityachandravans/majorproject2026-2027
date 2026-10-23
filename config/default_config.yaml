@@ -33,7 +33,15 @@ environment:
     medical_treat_delay: 8
     rescue_delay: 10
 
+  inaccessible_prob: 0.2
+  inaccessible_cost: 2
+  rescue_duration: 2
+  demand_growth_rate: 0.2
   seed: 42
+
+comms:
+  comm_enabled: true
+  comm_dropout_prob: 0.1
 
 rewards:
   medical:
@@ -51,10 +59,23 @@ rewards:
     shortage_penalty: 2.0
     waste_penalty: 5.0
 
+  team_reward_weight: 0.2
+
 db:
-  path: "disaster_metrics.db"
+  uri: "mongodb://localhost:27017/"
+  database: "disaster_metrics"
 
 training:
-  total_timesteps: 5000
+  total_timesteps: 200000
   learning_rate: 0.0003
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_eps: 0.2
+  entropy_coef: 0.01
+  value_coef: 0.5
+  max_grad_norm: 0.5
+  epochs: 10
+  batch_size: 64
+  rollout_length: 128
   checkpoint_dir: "checkpoints"
+  checkpoint_freq: 50
