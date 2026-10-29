@@ -25,8 +25,17 @@ class MAPPOPolicy:
             for agent_id, obs_vec in obs_dict.items():
                 role = agent_id.split("_")[0]
                 if role in self.actors:
-                    obs_t = torch.tensor(obs_vec, dtype=torch.float32, device=self.device).unsqueeze(0)
-                    act_t, _, _ = self.actors[role].get_action(obs_t, deterministic=deterministic)
+                    actor = self.actors[role]
+                    expected_dim = actor.obs_dim
+                    if len(obs_vec) < expected_dim:
+                        padded_obs = np.pad(obs_vec, (0, expected_dim - len(obs_vec)), 'constant')
+                        obs_t = torch.tensor(padded_obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+                    elif len(obs_vec) > expected_dim:
+                        obs_t = torch.tensor(obs_vec[:expected_dim], dtype=torch.float32, device=self.device).unsqueeze(0)
+                    else:
+                        obs_t = torch.tensor(obs_vec, dtype=torch.float32, device=self.device).unsqueeze(0)
+
+                    act_t, _, _ = actor.get_action(obs_t, deterministic=deterministic)
                     actions[agent_id] = int(act_t.item())
                 else:
                     actions[agent_id] = 0

@@ -79,3 +79,16 @@ def test_render_state_format(smoke_config):
     assert "metrics" in state_dict
     assert "avg_response_time" in state_dict["metrics"]
     assert "coordination_efficiency" in state_dict["metrics"]
+
+
+def test_lazy_initialization_before_reset(smoke_config):
+    env = DisasterResponseEnv(smoke_config)
+
+    state = env.render_state()
+    assert state["step_count"] == 0
+    assert len(env.agents) == len(env.possible_agents)
+
+    actions = {agent_id: 0 for agent_id in env.agents}
+    next_obs, rewards, terminations, truncations, infos = env.step(actions)
+    assert len(next_obs) == len(env.possible_agents)
+    assert len(rewards) == len(env.possible_agents)

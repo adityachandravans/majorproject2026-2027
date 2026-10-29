@@ -24,19 +24,30 @@ class DisasterResponseEnv(ParallelEnv):
 
     def __init__(self, config: dict, fixed_scenario: bool = False):
         super().__init__()
-        self.config = config
+        self.config = config if isinstance(config, dict) else {}
         self.fixed_scenario = fixed_scenario
 
-        env_cfg = config.get("environment", {})
+        env_cfg = self.config.get("environment", {})
         self.grid_size = tuple(env_cfg.get("grid_size", [10, 10]))
         self.max_steps = env_cfg.get("max_steps", 50)
-        self.num_zones = env_cfg.get("num_zones", 4)
+
+        # Determine num_zones dynamically from custom_zones if provided
+        custom_zones = env_cfg.get("custom_zones", None)
+        if custom_zones is not None and len(custom_zones) > 0:
+            self.num_zones = len(custom_zones)
+        else:
+            self.num_zones = env_cfg.get("num_zones", 4)
+
         self.num_depots = env_cfg.get("num_depots", 2)
         self.agent_counts = env_cfg.get("agent_counts", {"medical": 2, "rescue": 2, "logistics": 2})
         self.inaccessible_cost = env_cfg.get("inaccessible_cost", 2)
         self.rescue_duration = env_cfg.get("rescue_duration", 2)
         self.demand_growth_rate = env_cfg.get("demand_growth_rate", 0.2)
         self.time_threshold = env_cfg.get("time_thresholds", {}).get("medical_treat_delay", 8)
+        self.dynamic_zone_sizes = env_cfg.get("dynamic_zone_sizes", False)
+        self.size_change_prob = env_cfg.get("size_change_prob", 0.15)
+        self.zone_size_range = env_cfg.get("zone_size_range", [1, 3])
+        self._py_rng = None
 
         # Create agent instances & IDs
         self.possible_agents: List[str] = []
@@ -84,6 +95,10 @@ class DisasterResponseEnv(ParallelEnv):
     def action_space(self, agent: str) -> spaces.Space:
         return self.action_spaces[agent]
 
+    def _ensure_initialized(self):
+        if self.state_data is None:
+            self.reset(seed=self.config.get("environment", {}).get("seed", 42))
+
     def reset(self, seed: int = None, options: dict = None) -> Tuple[Dict[str, np.ndarray], Dict[str, dict]]:
         if seed is not None:
             self._seed = seed
@@ -112,16 +127,28 @@ class DisasterResponseEnv(ParallelEnv):
 
     def _get_nearest_depot(self, pos: Tuple[int, int], resource_type: str = None) -> dict:
         """Finds nearest depot, optionally filtered by available resource stock > 0."""
-        valid_depots = self.state_data["depots"]
+        depots = self.state_data.get("depots", []) if self.state_data else []
+        if not depots:
+            return {"pos": (0, 0), "id": -1, "ambulances": 0, "rescue_teams": 0, "supply_units": 0, "max_ambulances": 0, "max_rescue_teams": 0, "max_supply_units": 0}
+
+        valid_depots = depots
         if resource_type:
-            valid_depots = [d for d in valid_depots if d.get(resource_type, 0) > 0]
+            valid_depots = [d for d in depots if d.get(resource_type, 0) > 0]
         if not valid_depots:
-            valid_depots = self.state_data["depots"]
-            
+            valid_depots = depots
+
         def dist(d):
             return abs(pos[0] - d["pos"][0]) + abs(pos[1] - d["pos"][1])
-            
+
         return min(valid_depots, key=dist)
+
+    def _is_agent_in_zone(self, agent_pos: Tuple[int, int], zone: dict) -> bool:
+        """Checks if agent position is within the area of the zone (center pos + size radius)."""
+        zx, zy = zone["pos"]
+        ax, ay = agent_pos
+        size = zone.get("size", 1)
+        radius = max(0, int(size) - 1)
+        return max(abs(ax - zx), abs(ay - zy)) <= radius
 
     def _move_agent_step(self, agent_id: str, target_pos: Tuple[int, int]):
         """Moves agent one Manhattan step towards target_pos considering terrain accessibility."""
@@ -146,9 +173,9 @@ class DisasterResponseEnv(ParallelEnv):
         else:
             next_pos = (ax, ay + dy)
 
-        # Check if next_pos is an inaccessible zone
+        # Check if next_pos is in an inaccessible zone
         for z in self.state_data["zones"]:
-            if z["pos"] == next_pos and not z["accessibility"]:
+            if self._is_agent_in_zone(next_pos, z) and not z["accessibility"]:
                 agent_info["inaccessible_delay"] = self.inaccessible_cost - 1
                 break
 
@@ -161,6 +188,7 @@ class DisasterResponseEnv(ParallelEnv):
         Dict[str, bool],
         Dict[str, dict]
     ]:
+        self._ensure_initialized()
         if not self.agents:
             return {}, {}, {}, {}, {}
 
@@ -172,6 +200,22 @@ class DisasterResponseEnv(ParallelEnv):
         for zone in self.state_data["zones"]:
             if zone["casualty_count"] > 0 or zone["trapped_count"] > 0:
                 zone["supply_demand"] += self.demand_growth_rate
+
+        # Dynamic zone size change during simulation steps (if enabled)
+        if self.dynamic_zone_sizes and self.state_data["zones"]:
+            if self._py_rng is None:
+                import random
+                self._py_rng = random.Random(self._seed + self.step_count)
+            if self._py_rng.random() < self.size_change_prob:
+                target_z = self._py_rng.choice(self.state_data["zones"])
+                delta = self._py_rng.choice([-1, 1])
+                curr_size = target_z.get("size", 1)
+                min_s, max_s = self.zone_size_range[0], self.zone_size_range[1]
+                new_size = max(min(min_s, max_s), min(max(min_s, max_s), curr_size + delta))
+                if new_size != curr_size:
+                    target_z["size"] = new_size
+                    if new_size > curr_size and target_z["casualty_count"] > 0:
+                        target_z["supply_demand"] += 1.0
 
         # 2. Track communication messages & target collisions
         self.comm_channel.update_messages(self.state_data["agents"], actions)
@@ -220,7 +264,7 @@ class DisasterResponseEnv(ParallelEnv):
 
                 elif action == num_zones: # Treat casualty at current zone
                     for zone in self.state_data["zones"]:
-                        if agent_info["pos"] == zone["pos"] and zone["casualty_count"] > 0:
+                        if self._is_agent_in_zone(agent_info["pos"], zone) and zone["casualty_count"] > 0:
                             if not agent_info.get("has_ambulance", False):
                                 # Must hold ambulance to treat
                                 depot = self._get_nearest_depot((ax, ay), "ambulances")
@@ -278,7 +322,7 @@ class DisasterResponseEnv(ParallelEnv):
 
                 elif action == num_zones: # Perform rescue operation
                     for zone in self.state_data["zones"]:
-                        if agent_info["pos"] == zone["pos"] and zone["trapped_count"] > 0:
+                        if self._is_agent_in_zone(agent_info["pos"], zone) and zone["trapped_count"] > 0:
                             if not agent_info.get("has_rescue_team", False):
                                 depot = self._get_nearest_depot((ax, ay), "rescue_teams")
                                 if (ax, ay) == depot["pos"] and depot["rescue_teams"] > 0:
@@ -317,7 +361,7 @@ class DisasterResponseEnv(ParallelEnv):
                     agent_info["target_zone"] = action
                     self._move_agent_step(agent_id, target_zone["pos"])
 
-                    if agent_info["pos"] == target_zone["pos"] and agent_info.get("supply_payload", 0) > 0:
+                    if self._is_agent_in_zone(agent_info["pos"], target_zone) and agent_info.get("supply_payload", 0) > 0:
                         payload = agent_info["supply_payload"]
                         demand = target_zone["supply_demand"]
                         delivered = min(payload, max(5, int(demand))) if demand > 0 else payload
@@ -400,6 +444,7 @@ class DisasterResponseEnv(ParallelEnv):
 
     def render_state(self) -> dict:
         """Returns JSON-serializable dictionary representation of complete environment state & metrics."""
+        self._ensure_initialized()
         total_served = sum(z["casualties_treated"] for z in self.state_data["zones"])
         total_lost = sum(z["casualties_lost"] for z in self.state_data["zones"])
         remaining_cas = sum(z["casualty_count"] for z in self.state_data["zones"])
@@ -429,6 +474,7 @@ class DisasterResponseEnv(ParallelEnv):
             zones_list.append({
                 "id": int(z["id"]),
                 "pos": [int(z["pos"][0]), int(z["pos"][1])],
+                "size": int(z.get("size", 1)),
                 "severity": int(z["severity"]),
                 "casualty_count": int(z["casualty_count"]),
                 "trapped_count": int(z["trapped_count"]),
@@ -473,6 +519,7 @@ class DisasterResponseEnv(ParallelEnv):
 
     def render(self, mode: str = "ansi"):
         """Render grid state as ASCII text or matplotlib plot."""
+        self._ensure_initialized()
         if mode == "ansi":
             grid_w, grid_h = self.grid_size
             grid_matrix = [["." for _ in range(grid_w)] for _ in range(grid_h)]

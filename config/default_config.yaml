@@ -8,6 +8,13 @@ environment:
   
   # Severity levels: 1 (Low), 2 (Medium), 3 (High)
   zone_severities: [1, 2, 3]
+
+  # Zone size & dynamic variation configuration
+  default_zone_size: 1
+  zone_size_range: [1, 3]
+  randomize_zone_sizes: false
+  dynamic_zone_sizes: false
+  size_change_prob: 0.15
   
   casualty_ranges:
     1: [1, 3]

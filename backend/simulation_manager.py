@@ -93,6 +93,11 @@ class SimulationInstance:
 
         if self.policy_type == "marl":
             actions = self.policy_obj.act(self.obs_dict, deterministic=True)
+            # Clamp action to valid action space if scenario size differs from training
+            for agent_id in list(actions.keys()):
+                if agent_id in self.env.agents:
+                    max_act = self.env.action_space(agent_id).n - 1
+                    actions[agent_id] = min(max_act, max(0, actions[agent_id]))
         else:
             actions = {
                 agent_id: self.policy_obj.select_action(agent_id, self.env.agent_objects[agent_id].role, self.env.state_data)

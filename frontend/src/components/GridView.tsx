@@ -5,9 +5,10 @@ interface GridViewProps {
   frame: SimulationFrame | null;
   title?: string;
   cellSize?: number;
+  onCellClick?: (x: number, y: number) => void;
 }
 
-export const GridView: React.FC<GridViewProps> = ({ frame, title = 'Disaster Response Grid Map', cellSize = 60 }) => {
+export const GridView: React.FC<GridViewProps> = ({ frame, title = 'Disaster Response Grid Map', cellSize = 60, onCellClick }) => {
   if (!frame) {
     return (
       <div className="svg-grid-container" style={{ minHeight: 300 }}>
@@ -52,6 +53,8 @@ export const GridView: React.FC<GridViewProps> = ({ frame, title = 'Disaster Res
               fill={(x + y) % 2 === 0 ? '#0d1936' : '#091228'}
               stroke="#1e293b"
               strokeWidth={1}
+              style={{ cursor: onCellClick ? 'pointer' : 'default' }}
+              onClick={() => onCellClick && onCellClick(x, y)}
             />
           ))
         )}
@@ -60,26 +63,44 @@ export const GridView: React.FC<GridViewProps> = ({ frame, title = 'Disaster Res
         {frame.zones.map((z: ZoneState) => {
           const cx = z.pos[0] * cellSize + cellSize / 2;
           const cy = z.pos[1] * cellSize + cellSize / 2;
-          const radius = cellSize * 0.38;
+          const zoneSize = Math.max(1, z.size || 1);
+          const coreRadius = cellSize * 0.38;
           const color = severityColors[z.severity] || '#ef4444';
 
           return (
             <g key={`zone-${z.id}`}>
-              {/* Zone Circle */}
+              {/* Outer Area Footprint for Zones with size > 1 */}
+              {zoneSize > 1 && (
+                <rect
+                  x={(z.pos[0] - (zoneSize - 1)) * cellSize + 2}
+                  y={(z.pos[1] - (zoneSize - 1)) * cellSize + 2}
+                  width={(zoneSize * 2 - 1) * cellSize - 4}
+                  height={(zoneSize * 2 - 1) * cellSize - 4}
+                  rx={8}
+                  fill={color}
+                  fillOpacity={0.12}
+                  stroke={color}
+                  strokeWidth={1.5}
+                  strokeDasharray="4,4"
+                  pointerEvents="none"
+                />
+              )}
+
+              {/* Zone Center Circle */}
               <circle
                 cx={cx}
                 cy={cy}
-                r={radius}
+                r={coreRadius}
                 fill={color}
-                fillOpacity={0.25}
+                fillOpacity={0.28}
                 stroke={color}
                 strokeWidth={z.accessibility ? 2 : 3}
                 strokeDasharray={z.accessibility ? 'none' : '4,2'}
               />
 
-              {/* Zone Label */}
+              {/* Zone Label with Severity & Size */}
               <text x={cx} y={cy - 10} textAnchor="middle" fill="#ffffff" fontSize={11} fontWeight="bold">
-                Z{z.id} (S{z.severity})
+                Z{z.id} (S{z.severity}{zoneSize > 1 ? ` · Sz:${zoneSize}` : ''})
               </text>
 
               {/* Casualty / Trapped Badges */}

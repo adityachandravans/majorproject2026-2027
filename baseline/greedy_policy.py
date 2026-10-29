@@ -29,6 +29,11 @@ class GreedyPolicy:
         def distance(pos1, pos2):
             return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
 
+        def is_in_zone(pos, zone):
+            zx, zy = zone["pos"]
+            radius = max(0, int(zone.get("size", 1)) - 1)
+            return max(abs(pos[0] - zx), abs(pos[1] - zy)) <= radius
+
         if agent_role == "medical":
             # 1. If carrying treated casualty -> transport to nearest depot/hospital (action = num_zones + 1)
             if agent_info.get("carrying", 0) > 0:
@@ -36,7 +41,7 @@ class GreedyPolicy:
 
             # 2. If at zone with casualties > 0 -> Treat action (num_zones)
             for z in zones:
-                if (ax, ay) == z["pos"] and z["casualty_count"] > 0:
+                if is_in_zone((ax, ay), z) and z["casualty_count"] > 0:
                     return num_zones
 
             # 3. If missing ambulance -> move to depot or zone 0
@@ -62,7 +67,7 @@ class GreedyPolicy:
         elif agent_role == "rescue":
             # 1. If at zone with trapped > 0 -> Rescue action (num_zones)
             for z in zones:
-                if (ax, ay) == z["pos"] and z["trapped_count"] > 0:
+                if is_in_zone((ax, ay), z) and z["trapped_count"] > 0:
                     return num_zones
 
             # 2. Target nearest zone with trapped > 0

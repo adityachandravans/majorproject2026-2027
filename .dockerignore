@@ -1,0 +1,14 @@
+.git
+.github
+.venv
+.vscode
+.pytest_cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.db
+frontend/node_modules
+frontend/dist
+tests/
+baseline_metrics.png

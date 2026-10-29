@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:6.0
+    container_name: disaster_mongo
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=disaster_metrics
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: disaster_marl_app
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017/disaster_metrics
+      - PORT=8000
+    depends_on:
+      - mongodb
+
+volumes:
+  mongo_data:

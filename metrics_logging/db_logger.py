@@ -6,6 +6,7 @@ Provides collection management, run tracking, episode metrics, and training curv
 import os
 import json
 import uuid
+import sqlite3
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 import pymongo
@@ -44,16 +45,106 @@ class DBLogger:
 
         self.uri = uri
         self.db_name = resolved_db_name or "disaster_metrics"
+        self._backend = "mongo"
+        self._sqlite_path = None
+        self._sqlite_conn = None
 
-        self.client = client or pymongo.MongoClient(self.uri, serverSelectionTimeoutMS=5000)
-        self.db = self.client[self.db_name]
+        try:
+            self.client = client or pymongo.MongoClient(self.uri, serverSelectionTimeoutMS=5000)
+            self.db = self.client[self.db_name]
+            self.runs = self.db["runs"]
+            self.episodes = self.db["episodes"]
+            self.training_curve = self.db["training_curve"]
+            self.counters = self.db["counters"]
+            self._init_db()
+        except Exception:
+            self._backend = "sqlite"
+            sqlite_name = self.db_name if self.db_name.endswith(".db") else f"{self.db_name}.db"
+            self._sqlite_path = os.path.join(os.getcwd(), sqlite_name)
+            self._sqlite_conn = sqlite3.connect(self._sqlite_path)
+            self._sqlite_conn.row_factory = sqlite3.Row
+            self.runs = None
+            self.episodes = None
+            self.training_curve = None
+            self.counters = None
+            self._init_sqlite_db()
 
-        self.runs = self.db["runs"]
-        self.episodes = self.db["episodes"]
-        self.training_curve = self.db["training_curve"]
-        self.counters = self.db["counters"]
+    def _init_sqlite_db(self):
+        """Creates SQLite tables used by the same public API when MongoDB is unavailable."""
+        conn = self._sqlite_conn
+        if conn is None:
+            return
 
-        self._init_db()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS runs (
+                run_id TEXT PRIMARY KEY,
+                run_type TEXT,
+                policy TEXT,
+                config_used TEXT,
+                seed INTEGER,
+                timestamp TEXT,
+                notes TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS episodes (
+                episode_id INTEGER PRIMARY KEY,
+                run_id TEXT,
+                episode_num INTEGER,
+                total_reward REAL,
+                avg_response_time REAL,
+                resource_utilization_rate REAL,
+                casualties_served INTEGER,
+                casualties_lost INTEGER,
+                casualties_total INTEGER,
+                task_completion_rate REAL,
+                coordination_efficiency REAL,
+                medical_reward REAL,
+                rescue_reward REAL,
+                logistics_reward REAL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS training_curve (
+                curve_id INTEGER PRIMARY KEY,
+                run_id TEXT,
+                update_num INTEGER,
+                mean_reward REAL,
+                actor_loss REAL,
+                critic_loss REAL,
+                entropy REAL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS counters (
+                name TEXT PRIMARY KEY,
+                seq INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        conn.commit()
+
+    def _next_sqlite_id(self, counter_name: str) -> int:
+        conn = self._sqlite_conn
+        if conn is None:
+            return 0
+
+        current = conn.execute(
+            "SELECT seq FROM counters WHERE name = ?",
+            (counter_name,)
+        ).fetchone()
+        seq = int(current[0]) if current else 0
+        seq += 1
+        conn.execute(
+            "INSERT INTO counters(name, seq) VALUES(?, ?) ON CONFLICT(name) DO UPDATE SET seq = excluded.seq",
+            (counter_name, seq)
+        )
+        conn.commit()
+        return seq
+
+    def _sqlite_execute(self, query: str, params: tuple = ()):
+        if self._sqlite_conn is None:
+            return None
+        return self._sqlite_conn.execute(query, params)
 
     def _init_db(self):
         """Creates collection indexes and ensures counter collections are initialized."""
@@ -91,7 +182,7 @@ class DBLogger:
         return int(res["seq"])
 
     def start_run(self, run_type: str, config: dict, policy: str = "marl", seed: int = 42, notes: str = "") -> str:
-        """Registers a new run in MongoDB and returns a unique run_id."""
+        """Registers a new run and returns a unique run_id."""
         run_id = f"{run_type}_{uuid.uuid4().hex[:8]}"
         timestamp = datetime.now().isoformat()
         config_json = json.dumps(config) if isinstance(config, (dict, list)) else str(config)
@@ -105,13 +196,24 @@ class DBLogger:
             "timestamp": timestamp,
             "notes": notes or ""
         }
+
+        if self._backend == "sqlite":
+            conn = self._sqlite_conn
+            if conn is not None:
+                conn.execute(
+                    "INSERT INTO runs(run_id, run_type, policy, config_used, seed, timestamp, notes) VALUES(?, ?, ?, ?, ?, ?, ?)",
+                    (run_id, run_type, policy, config_json, int(seed) if seed is not None else None, timestamp, notes or "")
+                )
+                conn.commit()
+            return run_id
+
         self.runs.insert_one(doc)
         return run_id
 
     def log_episode(self, run_id: str, episode_num: int, metrics: dict):
-        """Logs episode evaluation metrics to MongoDB."""
+        """Logs episode evaluation metrics."""
         role_rewards = metrics.get("role_rewards", {})
-        ep_id = self._next_id("episode_id")
+        ep_id = self._next_sqlite_id("episode_id") if self._backend == "sqlite" else self._next_id("episode_id")
 
         doc = {
             "episode_id": ep_id,
@@ -129,11 +231,29 @@ class DBLogger:
             "rescue_reward": float(role_rewards.get("rescue", 0.0)),
             "logistics_reward": float(role_rewards.get("logistics", 0.0))
         }
+
+        if self._backend == "sqlite":
+            conn = self._sqlite_conn
+            if conn is not None:
+                conn.execute(
+                    "INSERT INTO episodes(episode_id, run_id, episode_num, total_reward, avg_response_time, resource_utilization_rate, casualties_served, casualties_lost, casualties_total, task_completion_rate, coordination_efficiency, medical_reward, rescue_reward, logistics_reward) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        ep_id, run_id, int(episode_num), float(metrics.get("total_reward", 0.0)),
+                        float(metrics.get("avg_response_time", 0.0)), float(metrics.get("resource_utilization_rate", 0.0)),
+                        int(metrics.get("casualties_served", 0)), int(metrics.get("casualties_lost", 0)),
+                        int(metrics.get("casualties_total", 0)), float(metrics.get("task_completion_rate", 0.0)),
+                        float(metrics.get("coordination_efficiency", 0.0)), float(role_rewards.get("medical", 0.0)),
+                        float(role_rewards.get("rescue", 0.0)), float(role_rewards.get("logistics", 0.0))
+                    )
+                )
+                conn.commit()
+            return
+
         self.episodes.insert_one(doc)
 
     def log_training_update(self, run_id: str, update_num: int, mean_reward: float, actor_loss: float, critic_loss: float, entropy: float):
-        """Logs MARL training update metrics to MongoDB."""
-        cv_id = self._next_id("curve_id")
+        """Logs MARL training update metrics."""
+        cv_id = self._next_sqlite_id("curve_id") if self._backend == "sqlite" else self._next_id("curve_id")
         doc = {
             "curve_id": cv_id,
             "run_id": run_id,
@@ -143,10 +263,37 @@ class DBLogger:
             "critic_loss": float(critic_loss),
             "entropy": float(entropy)
         }
+
+        if self._backend == "sqlite":
+            conn = self._sqlite_conn
+            if conn is not None:
+                conn.execute(
+                    "INSERT INTO training_curve(curve_id, run_id, update_num, mean_reward, actor_loss, critic_loss, entropy) VALUES(?, ?, ?, ?, ?, ?, ?)",
+                    (cv_id, run_id, int(update_num), float(mean_reward), float(actor_loss), float(critic_loss), float(entropy))
+                )
+                conn.commit()
+            return
+
         self.training_curve.insert_one(doc)
 
     def get_run_episodes(self, run_id: str) -> pd.DataFrame:
         """Fetches episodes for a specific run as a pandas DataFrame."""
+        if self._backend == "sqlite":
+            rows = self._sqlite_conn.execute(
+                "SELECT * FROM episodes WHERE run_id = ? ORDER BY episode_num ASC",
+                (run_id,)
+            ).fetchall()
+            records = [dict(r) for r in rows]
+            if records:
+                return pd.DataFrame(records)
+            return pd.DataFrame(columns=[
+                "episode_id", "run_id", "episode_num", "total_reward",
+                "avg_response_time", "resource_utilization_rate",
+                "casualties_served", "casualties_lost", "casualties_total",
+                "task_completion_rate", "coordination_efficiency",
+                "medical_reward", "rescue_reward", "logistics_reward"
+            ])
+
         cursor = self.episodes.find({"run_id": run_id}, {"_id": 0}).sort("episode_num", pymongo.ASCENDING)
         records = list(cursor)
         if records:
@@ -161,6 +308,19 @@ class DBLogger:
 
     def get_training_curve(self, run_id: str) -> pd.DataFrame:
         """Fetches training curve for a specific run as a pandas DataFrame."""
+        if self._backend == "sqlite":
+            rows = self._sqlite_conn.execute(
+                "SELECT * FROM training_curve WHERE run_id = ? ORDER BY update_num ASC",
+                (run_id,)
+            ).fetchall()
+            records = [dict(r) for r in rows]
+            if records:
+                return pd.DataFrame(records)
+            return pd.DataFrame(columns=[
+                "curve_id", "run_id", "update_num", "mean_reward",
+                "actor_loss", "critic_loss", "entropy"
+            ])
+
         cursor = self.training_curve.find({"run_id": run_id}, {"_id": 0}).sort("update_num", pymongo.ASCENDING)
         records = list(cursor)
         if records:
@@ -171,7 +331,19 @@ class DBLogger:
         ])
 
     def get_latest_training_curve(self) -> pd.DataFrame:
-        """Fetches latest training curve from MongoDB."""
+        """Fetches latest training curve from the active backend."""
+        if self._backend == "sqlite":
+            rows = self._sqlite_conn.execute(
+                "SELECT * FROM training_curve ORDER BY curve_id ASC"
+            ).fetchall()
+            records = [dict(r) for r in rows]
+            if records:
+                return pd.DataFrame(records)
+            return pd.DataFrame(columns=[
+                "curve_id", "run_id", "update_num", "mean_reward",
+                "actor_loss", "critic_loss", "entropy"
+            ])
+
         cursor = self.training_curve.find({}, {"_id": 0}).sort("curve_id", pymongo.ASCENDING)
         records = list(cursor)
         if records:
@@ -183,6 +355,21 @@ class DBLogger:
 
     def get_all_runs(self) -> List[dict]:
         """Fetches all registered runs ordered by timestamp descending."""
+        if self._backend == "sqlite":
+            rows = self._sqlite_conn.execute(
+                "SELECT run_id, run_type, policy, timestamp, notes FROM runs ORDER BY timestamp DESC"
+            ).fetchall()
+            return [
+                {
+                    "run_id": r["run_id"],
+                    "run_type": r["run_type"],
+                    "policy": r["policy"],
+                    "timestamp": r["timestamp"],
+                    "notes": r["notes"]
+                }
+                for r in rows
+            ]
+
         cursor = self.runs.find(
             {},
             {"_id": 0, "run_id": 1, "run_type": 1, "policy": 1, "timestamp": 1, "notes": 1}
@@ -200,6 +387,14 @@ class DBLogger:
 
     def clear_database(self):
         """Removes all documents from collections and resets counters for clean testing."""
+        if self._backend == "sqlite":
+            conn = self._sqlite_conn
+            if conn is not None:
+                for table in ("runs", "episodes", "training_curve", "counters"):
+                    conn.execute(f"DELETE FROM {table}")
+                conn.commit()
+            return
+
         self.runs.delete_many({})
         self.episodes.delete_many({})
         self.training_curve.delete_many({})
@@ -207,8 +402,19 @@ class DBLogger:
 
     def drop_database(self):
         """Drops the entire database."""
+        if self._backend == "sqlite":
+            if self._sqlite_path and os.path.exists(self._sqlite_path):
+                self._sqlite_conn.close()
+                os.remove(self._sqlite_path)
+            return
+
         self.client.drop_database(self.db_name)
 
     def close(self):
-        """Closes the MongoDB client connection."""
+        """Closes the active client connection."""
+        if self._backend == "sqlite":
+            if self._sqlite_conn is not None:
+                self._sqlite_conn.close()
+            return
+
         self.client.close()

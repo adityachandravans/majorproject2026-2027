@@ -7,8 +7,12 @@ import { TrainingResults } from './components/TrainingResults';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>('sim');
+  const [activeSimId, setActiveSimId] = useState<string | null>(null);
+  const [activeConfig, setActiveConfig] = useState<any | null>(null);
 
-  const handleSimulationCreated = (simId: string) => {
+  const handleSimulationCreated = (simId: string, cfg?: any) => {
+    setActiveSimId(simId);
+    if (cfg) setActiveConfig(cfg);
     setActiveTab('sim');
   };
 
@@ -17,7 +21,7 @@ export const App: React.FC = () => {
       <Navbar activeTab={activeTab} setActiveTab={setActiveTab} />
       
       <main className="main-content">
-        {activeTab === 'sim' && <LiveSimulation />}
+        {activeTab === 'sim' && <LiveSimulation initialSimId={activeSimId} initialConfig={activeConfig} />}
         {activeTab === 'config' && <ScenarioConfig onSimulationCreated={handleSimulationCreated} />}
         {activeTab === 'compare' && <ComparePolicies />}
         {activeTab === 'training' && <TrainingResults />}

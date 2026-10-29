@@ -12,6 +12,7 @@ export interface AgentState {
 export interface ZoneState {
   id: number;
   pos: [number, number];
+  size?: number;
   severity: number;
   casualty_count: number;
   trapped_count: number;
