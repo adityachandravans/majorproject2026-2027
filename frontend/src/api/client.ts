@@ -1,6 +1,6 @@
 import { SimulationFrame, CheckpointInfo, RunRecord, EpisodeRecord } from '../types';
 
-const API_BASE = '';
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '');
 
 export async function fetchDefaultConfig() {
   const res = await fetch(`${API_BASE}/api/config/default`);
@@ -21,6 +21,12 @@ export async function createSimulation(payload: {
     body: JSON.stringify(payload)
   });
   if (!res.ok) throw new Error('Failed to create simulation');
+  return res.json();
+}
+
+export async function getSimulationState(sim_id: string): Promise<SimulationFrame> {
+  const res = await fetch(`${API_BASE}/api/simulations/${sim_id}/state`);
+  if (!res.ok) throw new Error('Failed to get simulation state');
   return res.json();
 }
 
@@ -96,11 +102,13 @@ export function connectSimulationWebSocket(
   onFrame: (frame: SimulationFrame) => void,
   onError?: (err: Event) => void
 ): WebSocket {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const host = window.location.host;
-  const wsUrl = `${protocol}//${host}/ws/simulations/${sim_id}`;
+  const wsUrl = new URL(
+    `/ws/simulations/${encodeURIComponent(sim_id)}`,
+    API_BASE || window.location.origin
+  );
+  wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
   
-  const ws = new WebSocket(wsUrl);
+  const ws = new WebSocket(wsUrl.toString());
 
   ws.onmessage = (event) => {
     try {

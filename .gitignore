@@ -1,4 +1,10 @@
 __pycache__/
 *.pyc
 *.pyo
+.venv/
+.vscode/
+frontend/node_modules/
+frontend/dist/
+results/
+*.db
 .pytest_cache/
