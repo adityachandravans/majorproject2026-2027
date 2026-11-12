@@ -141,6 +141,13 @@ class DBLogger:
                 seq INTEGER NOT NULL DEFAULT 0
             )
         """)
+        run_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(runs)").fetchall()
+        }
+        if "policy" not in run_columns:
+            conn.execute(
+                "ALTER TABLE runs ADD COLUMN policy TEXT NOT NULL DEFAULT 'marl'"
+            )
         conn.commit()
 
     def _next_sqlite_id(self, counter_name: str) -> int:

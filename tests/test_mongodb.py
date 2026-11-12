@@ -2,9 +2,12 @@
 Comprehensive tests for MongoDB Logger implementation.
 """
 
-import pytest
-import pandas as pd
+import sqlite3
 from unittest.mock import MagicMock
+
+import pandas as pd
+import pytest
+
 from metrics_logging.db_logger import DBLogger
 
 
@@ -38,6 +41,36 @@ def test_required_mongodb_does_not_fall_back_to_sqlite(monkeypatch):
 
     with pytest.raises(RuntimeError, match="MongoDB is required"):
         DBLogger({"uri": "mongodb://localhost:27017/", "database": "disaster_metrics"})
+
+def test_sqlite_fallback_migrates_legacy_runs_table(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MONGODB_REQUIRED", raising=False)
+    monkeypatch.setenv("MONGODB_DATABASE", "legacy")
+
+    def unavailable_client(*args, **kwargs):
+        raise RuntimeError("MongoDB unavailable")
+
+    monkeypatch.setattr("metrics_logging.db_logger.pymongo.MongoClient", unavailable_client)
+
+    conn = sqlite3.connect(tmp_path / "legacy.db")
+    conn.execute(
+        "CREATE TABLE runs (run_id TEXT PRIMARY KEY, run_type TEXT, config_used TEXT, "
+        "seed INTEGER, timestamp TEXT, notes TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO runs(run_id, run_type, config_used, seed, timestamp, notes) "
+        "VALUES('existing-run', 'simulation', '{}', 42, '2026-01-01', '')"
+    )
+    conn.commit()
+    conn.close()
+
+    logger = DBLogger({"database": "legacy"})
+    logger.start_run("simulation", {}, policy="baseline", seed=43)
+
+    runs = {run["run_id"]: run for run in logger.get_all_runs()}
+    assert runs["existing-run"]["policy"] == "marl"
+    assert any(run["policy"] == "baseline" for run in runs.values())
+    logger.close()
 
 
 @pytest.fixture
