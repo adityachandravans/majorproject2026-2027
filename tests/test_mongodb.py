@@ -4,7 +4,21 @@ Comprehensive tests for MongoDB Logger implementation.
 
 import pytest
 import pandas as pd
+from unittest.mock import MagicMock
 from metrics_logging.db_logger import DBLogger
+
+
+def test_environment_mongodb_uri_overrides_config(monkeypatch):
+    mongo_client = MagicMock()
+    database = MagicMock()
+    mongo_client.__getitem__.return_value = database
+    monkeypatch.setattr("metrics_logging.db_logger.pymongo.MongoClient", lambda *args, **kwargs: mongo_client)
+    monkeypatch.setenv("MONGODB_URI", "mongodb+srv://example.invalid/deployment")
+
+    logger = DBLogger({"uri": "mongodb://localhost:27017/", "database": "disaster_metrics"})
+
+    assert logger.uri == "mongodb+srv://example.invalid/deployment"
+
 
 @pytest.fixture
 def mongo_logger():

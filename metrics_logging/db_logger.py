@@ -11,6 +11,9 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 import pymongo
 import pandas as pd
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class DBLogger:
@@ -28,11 +31,12 @@ class DBLogger:
             db_name: Optional explicit database name.
             client: Optional pre-existing MongoClient instance.
         """
-        uri = os.environ.get("MONGODB_URI", "mongodb://localhost:27017/")
+        environment_uri = os.environ.get("MONGODB_URI")
+        uri = environment_uri or "mongodb://localhost:27017/"
         resolved_db_name = db_name or os.environ.get("MONGODB_DATABASE")
 
         if isinstance(uri_or_config, dict):
-            uri = uri_or_config.get("uri", uri)
+            uri = environment_uri or uri_or_config.get("uri", uri)
             resolved_db_name = uri_or_config.get("database") or uri_or_config.get("db_name") or resolved_db_name
         elif isinstance(uri_or_config, str):
             if uri_or_config.startswith("mongodb://") or uri_or_config.startswith("mongodb+srv://"):

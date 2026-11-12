@@ -7,6 +7,9 @@ import os
 import sys
 import sqlite3
 import pymongo
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def migrate_sqlite_to_mongodb(
     sqlite_path: str,

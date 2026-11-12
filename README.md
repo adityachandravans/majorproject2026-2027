@@ -86,6 +86,8 @@ Install Python dependencies:
 pip install -r requirements.txt
 ```
 
+For MongoDB Atlas, create a root `.env` file with `MONGODB_URI` set to your Atlas connection string and `MONGODB_DATABASE=disaster_metrics`. The backend, training tools, and SQLite migration script load this file automatically. The root `.env` is ignored by Git; do not commit database credentials. Docker Compose uses this URI when set and otherwise keeps its local MongoDB default.
+
 Install React frontend dependencies:
 ```bash
 cd frontend && npm install && npm run build && cd ..

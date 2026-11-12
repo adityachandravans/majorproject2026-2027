@@ -21,7 +21,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - MONGODB_URI=mongodb://mongodb:27017/disaster_metrics
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongodb:27017/disaster_metrics}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-disaster_metrics}
       - PORT=8000
     depends_on:
       - mongodb
