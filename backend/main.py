@@ -1,7 +1,7 @@
 """
 FastAPI Backend Application with WebSocket Streaming and REST Endpoints (FR5, FR6, FR8, NFR1).
 """
-
+from fastapi.middleware.cors import CORSMiddleware
 import os
 import sys
 import yaml
@@ -39,7 +39,10 @@ _frontend_origins = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_frontend_origins,
+    allow_origins=[
+        "https://majorproject2026-2027.vercel.app",
+        "http://localhost:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
