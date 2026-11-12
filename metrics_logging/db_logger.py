@@ -7,6 +7,8 @@ import os
 import json
 import uuid
 import sqlite3
+import logging
+from threading import RLock
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 import pymongo
@@ -14,6 +16,8 @@ import pandas as pd
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 class DBLogger:
@@ -33,11 +37,13 @@ class DBLogger:
         """
         environment_uri = os.environ.get("MONGODB_URI")
         uri = environment_uri or "mongodb://localhost:27017/"
-        resolved_db_name = db_name or os.environ.get("MONGODB_DATABASE")
+        environment_db_name = os.environ.get("MONGODB_DATABASE")
+        resolved_db_name = db_name or environment_db_name
 
         if isinstance(uri_or_config, dict):
             uri = environment_uri or uri_or_config.get("uri", uri)
-            resolved_db_name = uri_or_config.get("database") or uri_or_config.get("db_name") or resolved_db_name
+            config_db_name = uri_or_config.get("database") or uri_or_config.get("db_name")
+            resolved_db_name = db_name or environment_db_name or config_db_name
         elif isinstance(uri_or_config, str):
             if uri_or_config.startswith("mongodb://") or uri_or_config.startswith("mongodb+srv://"):
                 uri = uri_or_config
@@ -52,6 +58,7 @@ class DBLogger:
         self._backend = "mongo"
         self._sqlite_path = None
         self._sqlite_conn = None
+        self._sqlite_lock = RLock()
 
         try:
             self.client = client or pymongo.MongoClient(self.uri, serverSelectionTimeoutMS=5000)
@@ -61,11 +68,20 @@ class DBLogger:
             self.training_curve = self.db["training_curve"]
             self.counters = self.db["counters"]
             self._init_db()
-        except Exception:
+        except Exception as exc:
+            if os.environ.get("MONGODB_REQUIRED", "").lower() in {"1", "true", "yes"}:
+                raise RuntimeError(
+                    f"MongoDB is required but initialization failed ({type(exc).__name__})"
+                ) from None
+
+            logger.warning(
+                "MongoDB initialization failed (%s); using SQLite fallback",
+                type(exc).__name__
+            )
             self._backend = "sqlite"
             sqlite_name = self.db_name if self.db_name.endswith(".db") else f"{self.db_name}.db"
             self._sqlite_path = os.path.join(os.getcwd(), sqlite_name)
-            self._sqlite_conn = sqlite3.connect(self._sqlite_path)
+            self._sqlite_conn = sqlite3.connect(self._sqlite_path, check_same_thread=False)
             self._sqlite_conn.row_factory = sqlite3.Row
             self.runs = None
             self.episodes = None
@@ -132,23 +148,25 @@ class DBLogger:
         if conn is None:
             return 0
 
-        current = conn.execute(
-            "SELECT seq FROM counters WHERE name = ?",
-            (counter_name,)
-        ).fetchone()
-        seq = int(current[0]) if current else 0
-        seq += 1
-        conn.execute(
-            "INSERT INTO counters(name, seq) VALUES(?, ?) ON CONFLICT(name) DO UPDATE SET seq = excluded.seq",
-            (counter_name, seq)
-        )
-        conn.commit()
-        return seq
+        with self._sqlite_lock:
+            current = conn.execute(
+                "SELECT seq FROM counters WHERE name = ?",
+                (counter_name,)
+            ).fetchone()
+            seq = int(current[0]) if current else 0
+            seq += 1
+            conn.execute(
+                "INSERT INTO counters(name, seq) VALUES(?, ?) ON CONFLICT(name) DO UPDATE SET seq = excluded.seq",
+                (counter_name, seq)
+            )
+            conn.commit()
+            return seq
 
     def _sqlite_execute(self, query: str, params: tuple = ()):
         if self._sqlite_conn is None:
             return None
-        return self._sqlite_conn.execute(query, params)
+        with self._sqlite_lock:
+            return self._sqlite_conn.execute(query, params)
 
     def _init_db(self):
         """Creates collection indexes and ensures counter collections are initialized."""
@@ -204,11 +222,12 @@ class DBLogger:
         if self._backend == "sqlite":
             conn = self._sqlite_conn
             if conn is not None:
-                conn.execute(
-                    "INSERT INTO runs(run_id, run_type, policy, config_used, seed, timestamp, notes) VALUES(?, ?, ?, ?, ?, ?, ?)",
-                    (run_id, run_type, policy, config_json, int(seed) if seed is not None else None, timestamp, notes or "")
-                )
-                conn.commit()
+                with self._sqlite_lock:
+                    conn.execute(
+                        "INSERT INTO runs(run_id, run_type, policy, config_used, seed, timestamp, notes) VALUES(?, ?, ?, ?, ?, ?, ?)",
+                        (run_id, run_type, policy, config_json, int(seed) if seed is not None else None, timestamp, notes or "")
+                    )
+                    conn.commit()
             return run_id
 
         self.runs.insert_one(doc)
@@ -239,18 +258,19 @@ class DBLogger:
         if self._backend == "sqlite":
             conn = self._sqlite_conn
             if conn is not None:
-                conn.execute(
-                    "INSERT INTO episodes(episode_id, run_id, episode_num, total_reward, avg_response_time, resource_utilization_rate, casualties_served, casualties_lost, casualties_total, task_completion_rate, coordination_efficiency, medical_reward, rescue_reward, logistics_reward) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        ep_id, run_id, int(episode_num), float(metrics.get("total_reward", 0.0)),
-                        float(metrics.get("avg_response_time", 0.0)), float(metrics.get("resource_utilization_rate", 0.0)),
-                        int(metrics.get("casualties_served", 0)), int(metrics.get("casualties_lost", 0)),
-                        int(metrics.get("casualties_total", 0)), float(metrics.get("task_completion_rate", 0.0)),
-                        float(metrics.get("coordination_efficiency", 0.0)), float(role_rewards.get("medical", 0.0)),
-                        float(role_rewards.get("rescue", 0.0)), float(role_rewards.get("logistics", 0.0))
+                with self._sqlite_lock:
+                    conn.execute(
+                        "INSERT INTO episodes(episode_id, run_id, episode_num, total_reward, avg_response_time, resource_utilization_rate, casualties_served, casualties_lost, casualties_total, task_completion_rate, coordination_efficiency, medical_reward, rescue_reward, logistics_reward) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            ep_id, run_id, int(episode_num), float(metrics.get("total_reward", 0.0)),
+                            float(metrics.get("avg_response_time", 0.0)), float(metrics.get("resource_utilization_rate", 0.0)),
+                            int(metrics.get("casualties_served", 0)), int(metrics.get("casualties_lost", 0)),
+                            int(metrics.get("casualties_total", 0)), float(metrics.get("task_completion_rate", 0.0)),
+                            float(metrics.get("coordination_efficiency", 0.0)), float(role_rewards.get("medical", 0.0)),
+                            float(role_rewards.get("rescue", 0.0)), float(role_rewards.get("logistics", 0.0))
+                        )
                     )
-                )
-                conn.commit()
+                    conn.commit()
             return
 
         self.episodes.insert_one(doc)
@@ -271,11 +291,12 @@ class DBLogger:
         if self._backend == "sqlite":
             conn = self._sqlite_conn
             if conn is not None:
-                conn.execute(
-                    "INSERT INTO training_curve(curve_id, run_id, update_num, mean_reward, actor_loss, critic_loss, entropy) VALUES(?, ?, ?, ?, ?, ?, ?)",
-                    (cv_id, run_id, int(update_num), float(mean_reward), float(actor_loss), float(critic_loss), float(entropy))
-                )
-                conn.commit()
+                with self._sqlite_lock:
+                    conn.execute(
+                        "INSERT INTO training_curve(curve_id, run_id, update_num, mean_reward, actor_loss, critic_loss, entropy) VALUES(?, ?, ?, ?, ?, ?, ?)",
+                        (cv_id, run_id, int(update_num), float(mean_reward), float(actor_loss), float(critic_loss), float(entropy))
+                    )
+                    conn.commit()
             return
 
         self.training_curve.insert_one(doc)
@@ -283,10 +304,11 @@ class DBLogger:
     def get_run_episodes(self, run_id: str) -> pd.DataFrame:
         """Fetches episodes for a specific run as a pandas DataFrame."""
         if self._backend == "sqlite":
-            rows = self._sqlite_conn.execute(
-                "SELECT * FROM episodes WHERE run_id = ? ORDER BY episode_num ASC",
-                (run_id,)
-            ).fetchall()
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(
+                    "SELECT * FROM episodes WHERE run_id = ? ORDER BY episode_num ASC",
+                    (run_id,)
+                ).fetchall()
             records = [dict(r) for r in rows]
             if records:
                 return pd.DataFrame(records)
@@ -313,10 +335,11 @@ class DBLogger:
     def get_training_curve(self, run_id: str) -> pd.DataFrame:
         """Fetches training curve for a specific run as a pandas DataFrame."""
         if self._backend == "sqlite":
-            rows = self._sqlite_conn.execute(
-                "SELECT * FROM training_curve WHERE run_id = ? ORDER BY update_num ASC",
-                (run_id,)
-            ).fetchall()
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(
+                    "SELECT * FROM training_curve WHERE run_id = ? ORDER BY update_num ASC",
+                    (run_id,)
+                ).fetchall()
             records = [dict(r) for r in rows]
             if records:
                 return pd.DataFrame(records)
@@ -337,9 +360,10 @@ class DBLogger:
     def get_latest_training_curve(self) -> pd.DataFrame:
         """Fetches latest training curve from the active backend."""
         if self._backend == "sqlite":
-            rows = self._sqlite_conn.execute(
-                "SELECT * FROM training_curve ORDER BY curve_id ASC"
-            ).fetchall()
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(
+                    "SELECT * FROM training_curve ORDER BY curve_id ASC"
+                ).fetchall()
             records = [dict(r) for r in rows]
             if records:
                 return pd.DataFrame(records)
@@ -360,9 +384,10 @@ class DBLogger:
     def get_all_runs(self) -> List[dict]:
         """Fetches all registered runs ordered by timestamp descending."""
         if self._backend == "sqlite":
-            rows = self._sqlite_conn.execute(
-                "SELECT run_id, run_type, policy, timestamp, notes FROM runs ORDER BY timestamp DESC"
-            ).fetchall()
+            with self._sqlite_lock:
+                rows = self._sqlite_conn.execute(
+                    "SELECT run_id, run_type, policy, timestamp, notes FROM runs ORDER BY timestamp DESC"
+                ).fetchall()
             return [
                 {
                     "run_id": r["run_id"],
@@ -394,9 +419,10 @@ class DBLogger:
         if self._backend == "sqlite":
             conn = self._sqlite_conn
             if conn is not None:
-                for table in ("runs", "episodes", "training_curve", "counters"):
-                    conn.execute(f"DELETE FROM {table}")
-                conn.commit()
+                with self._sqlite_lock:
+                    for table in ("runs", "episodes", "training_curve", "counters"):
+                        conn.execute(f"DELETE FROM {table}")
+                    conn.commit()
             return
 
         self.runs.delete_many({})
@@ -408,8 +434,9 @@ class DBLogger:
         """Drops the entire database."""
         if self._backend == "sqlite":
             if self._sqlite_path and os.path.exists(self._sqlite_path):
-                self._sqlite_conn.close()
-                os.remove(self._sqlite_path)
+                with self._sqlite_lock:
+                    self._sqlite_conn.close()
+                    os.remove(self._sqlite_path)
             return
 
         self.client.drop_database(self.db_name)
@@ -418,7 +445,21 @@ class DBLogger:
         """Closes the active client connection."""
         if self._backend == "sqlite":
             if self._sqlite_conn is not None:
-                self._sqlite_conn.close()
+                with self._sqlite_lock:
+                    self._sqlite_conn.close()
             return
 
         self.client.close()
+
+    def ping(self) -> str:
+        """Checks connectivity and read access for the active database backend."""
+        if self._backend == "sqlite":
+            if self._sqlite_conn is None:
+                raise RuntimeError("SQLite connection is unavailable")
+            with self._sqlite_lock:
+                self._sqlite_conn.execute("SELECT 1")
+            return self._backend
+
+        self.client.admin.command("ping")
+        self.runs.find_one({}, {"_id": 1})
+        return self._backend

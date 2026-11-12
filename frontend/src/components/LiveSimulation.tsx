@@ -27,11 +27,10 @@ export const LiveSimulation: React.FC<LiveSimulationProps> = ({ initialSimId, in
   const [history, setHistory] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectAttemptsRef = useRef(0);
 
   const connectToSimulation = (simId: string, initialState?: SimulationFrame) => {
-    if (wsRef.current) {
-      wsRef.current.close();
-    }
     if (initialState) {
       setFrame(initialState);
       setHistory([{ step: initialState.step_count, ...initialState.metrics, reward: 0 }]);
@@ -49,16 +48,45 @@ export const LiveSimulation: React.FC<LiveSimulationProps> = ({ initialSimId, in
         }
         return [...prev, newPoint];
       });
+    }, () => {
+      setError('Live updates disconnected. Attempting to reconnect...');
     });
     wsRef.current = ws;
+    ws.onopen = () => {
+      reconnectAttemptsRef.current = 0;
+      setError(null);
+    };
+    ws.onclose = (event) => {
+      if (wsRef.current !== ws) return;
+      wsRef.current = null;
+      if (event.code === 1000) return;
+
+      if (reconnectAttemptsRef.current < 3) {
+        reconnectAttemptsRef.current += 1;
+        const delay = 1000 * (2 ** (reconnectAttemptsRef.current - 1));
+        setError(`Live updates disconnected. Reconnecting (${reconnectAttemptsRef.current}/3)...`);
+        reconnectTimerRef.current = window.setTimeout(() => connectToSimulation(simId), delay);
+      } else {
+        setError('Unable to reconnect to live updates. Start a new run to continue.');
+      }
+    };
+  };
+
+  const closeSocket = () => {
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    const ws = wsRef.current;
+    wsRef.current = null;
+    if (ws) ws.close();
   };
 
   // Initialize or re-create simulation
   const initSim = async (newPolicy = policy, newSeed = seed, cfg = activeConfig) => {
     try {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
+      closeSocket();
+      reconnectAttemptsRef.current = 0;
       const res = await createSimulation({ config: cfg || undefined, policy: newPolicy, seed: newSeed, speed });
       setFrame(res.state);
       setHistory([{ step: 0, ...res.state.metrics, reward: 0 }]);
@@ -83,7 +111,7 @@ export const LiveSimulation: React.FC<LiveSimulationProps> = ({ initialSimId, in
       initSim(policy, seed, initialConfig);
     }
     return () => {
-      if (wsRef.current) wsRef.current.close();
+      closeSocket();
     };
   }, [initialSimId]);
 

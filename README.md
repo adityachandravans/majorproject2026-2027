@@ -110,9 +110,9 @@ python scripts/demo.py
 
 ### Deploy frontend to Vercel and backend to Render
 
-1. Push the repository to GitHub and import it into Render as a Blueprint using the included `render.yaml`. Set `FRONTEND_ORIGINS` to the Vercel deployment origin (for example, `https://your-project.vercel.app`) and `MONGODB_URI` to a reachable MongoDB connection string, such as a MongoDB Atlas URI. Deploy the web service and copy its `https://...onrender.com` URL.
+1. Push the repository to GitHub and import it into Render as a Blueprint using the included `render.yaml` (root directory `.`). The Blueprint configures `FRONTEND_ORIGINS` for the production Vercel origin, a `/health` check, one Uvicorn worker, and CPU-only PyTorch. Set `MONGODB_URI` in Render's environment settings to a reachable MongoDB Atlas URI; `MONGODB_DATABASE` defaults to `disaster_metrics`. Production requires MongoDB and will not silently switch to ephemeral SQLite.
 2. Import the same repository into Vercel, set the project root directory to `frontend`, select the Vite framework preset, and set `VITE_API_BASE_URL` to the Render URL without a trailing slash (for example, `https://disaster-response-api.onrender.com`). Deploy the frontend.
-3. If the Vercel deployment has a custom domain, add its origin to Render's `FRONTEND_ORIGINS` value as a comma-separated origin. Redeploy the Render service after changing environment variables.
+3. If the Vercel deployment has a custom domain or preview origin, add it to Render's `FRONTEND_ORIGINS` value as a comma-separated origin, without trailing slashes. Redeploy the Render service after changing environment variables.
 4. Verify the frontend and check `https://<render-service>.onrender.com/api/config/default`. The frontend uses the Render URL for both REST and WebSocket traffic. Keep one backend worker because active simulations are kept in process memory.
 
 Render's local filesystem is not persistent across all service restarts and deployments. Use MongoDB Atlas for persistent run metrics; do not rely on the SQLite fallback for production data.

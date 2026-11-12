@@ -16,6 +16,39 @@ def test_get_default_config():
     cfg = response.json()
     assert "environment" in cfg
     assert "rewards" in cfg
+    assert "db" not in cfg
+
+def test_health_check_includes_database_backend():
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert response.json()["database"] in {"mongo", "sqlite"}
+
+def test_production_cors_preflight():
+    response = client.options(
+        "/api/simulations",
+        headers={
+            "Origin": "https://majorproject2026-2027.vercel.app",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://majorproject2026-2027.vercel.app"
+
+def test_cors_header_is_present_on_server_errors(monkeypatch):
+    def fail_create_simulation(*args, **kwargs):
+        raise RuntimeError("simulated failure")
+
+    monkeypatch.setattr("backend.main.sim_manager.create_simulation", fail_create_simulation)
+    test_client = TestClient(app, raise_server_exceptions=False)
+    response = test_client.post(
+        "/api/simulations",
+        headers={"Origin": "https://majorproject2026-2027.vercel.app"},
+        json={"policy": "baseline"},
+    )
+    assert response.status_code == 500
+    assert response.headers["access-control-allow-origin"] == "https://majorproject2026-2027.vercel.app"
 
 def test_create_simulation_and_step():
     payload = {

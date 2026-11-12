@@ -1,7 +1,6 @@
 """
 FastAPI Backend Application with WebSocket Streaming and REST Endpoints (FR5, FR6, FR8, NFR1).
 """
-from fastapi.middleware.cors import CORSMiddleware
 import os
 import sys
 import yaml
@@ -32,21 +31,10 @@ _frontend_origins = [
     origin.strip()
     for origin in os.environ.get(
         "FRONTEND_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173"
+        "https://majorproject2026-2027.vercel.app,http://localhost:5173,http://127.0.0.1:5173"
     ).split(",")
     if origin.strip()
 ]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "https://majorproject2026-2027.vercel.app",
-        "http://localhost:5173",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 sim_manager = SimulationManager()
 _default_cfg_path = "config/default_config.yaml"
@@ -57,13 +45,25 @@ if os.path.exists(_default_cfg_path):
 db_logger = DBLogger(_init_cfg.get("db", {}))
 
 
+@app.get("/health")
+def health_check():
+    try:
+        database_backend = db_logger.ping()
+    except Exception as exc:
+        logger.error("Database health check failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Database unavailable") from None
+    return {"status": "ok", "database": database_backend}
+
+
 @app.get("/api/config/default")
 def get_default_config():
     config_path = "config/default_config.yaml"
     if not os.path.exists(config_path):
         raise HTTPException(status_code=404, detail="Default config file not found.")
     with open(config_path, "r") as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f) or {}
+    config.pop("db", None)
+    return config
 
 
 @app.post("/api/simulations", response_model=SimStateResponse)
@@ -281,6 +281,14 @@ async def websocket_simulation(websocket: WebSocket, sim_id: str):
 # Serve React static frontend bundle if built
 if os.path.exists("frontend/dist"):
     app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
+
+app = CORSMiddleware(
+    app=app,
+    allow_origins=_frontend_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 if __name__ == "__main__":

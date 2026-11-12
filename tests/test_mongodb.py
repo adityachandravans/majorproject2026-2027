@@ -19,6 +19,26 @@ def test_environment_mongodb_uri_overrides_config(monkeypatch):
 
     assert logger.uri == "mongodb+srv://example.invalid/deployment"
 
+def test_environment_mongodb_database_overrides_config(monkeypatch):
+    mongo_client = MagicMock()
+    mongo_client.__getitem__.return_value = MagicMock()
+    monkeypatch.setattr("metrics_logging.db_logger.pymongo.MongoClient", lambda *args, **kwargs: mongo_client)
+    monkeypatch.setenv("MONGODB_DATABASE", "deployment_metrics")
+
+    logger = DBLogger({"database": "local_metrics"})
+
+    assert logger.db_name == "deployment_metrics"
+
+def test_required_mongodb_does_not_fall_back_to_sqlite(monkeypatch):
+    def unavailable_client(*args, **kwargs):
+        raise RuntimeError("MongoDB unavailable")
+
+    monkeypatch.setattr("metrics_logging.db_logger.pymongo.MongoClient", unavailable_client)
+    monkeypatch.setenv("MONGODB_REQUIRED", "true")
+
+    with pytest.raises(RuntimeError, match="MongoDB is required"):
+        DBLogger({"uri": "mongodb://localhost:27017/", "database": "disaster_metrics"})
+
 
 @pytest.fixture
 def mongo_logger():
