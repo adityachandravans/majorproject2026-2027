@@ -55,11 +55,11 @@ def test_sqlite_fallback_migrates_legacy_runs_table(tmp_path, monkeypatch):
     conn = sqlite3.connect(tmp_path / "legacy.db")
     conn.execute(
         "CREATE TABLE runs (run_id TEXT PRIMARY KEY, run_type TEXT, config_used TEXT, "
-        "seed INTEGER, timestamp TEXT, notes TEXT)"
+        "timestamp TEXT, notes TEXT)"
     )
     conn.execute(
-        "INSERT INTO runs(run_id, run_type, config_used, seed, timestamp, notes) "
-        "VALUES('existing-run', 'simulation', '{}', 42, '2026-01-01', '')"
+        "INSERT INTO runs(run_id, run_type, config_used, timestamp, notes) "
+        "VALUES('existing-run', 'simulation', '{}', '2026-01-01', '')"
     )
     conn.commit()
     conn.close()

@@ -148,6 +148,8 @@ class DBLogger:
             conn.execute(
                 "ALTER TABLE runs ADD COLUMN policy TEXT NOT NULL DEFAULT 'marl'"
             )
+        if "seed" not in run_columns:
+            conn.execute("ALTER TABLE runs ADD COLUMN seed INTEGER")
         conn.commit()
 
     def _next_sqlite_id(self, counter_name: str) -> int:
