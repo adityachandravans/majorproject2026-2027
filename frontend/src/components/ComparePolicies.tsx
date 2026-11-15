@@ -7,14 +7,16 @@ export const ComparePolicies: React.FC = () => {
   const [seed, setSeed] = useState<number>(42);
   const [loading, setLoading] = useState<boolean>(false);
   const [result, setResult] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const handleRunComparison = async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await comparePolicies({ seed, max_steps: 40 });
       setResult(res);
     } catch (e) {
-      console.error(e);
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -58,6 +60,12 @@ export const ComparePolicies: React.FC = () => {
           {loading ? '⏳ Running Benchmark...' : '⚔️ Run MARL vs Baseline Comparison'}
         </button>
       </div>
+
+      {error && (
+        <div role="alert" style={{ background: '#7f1d1d', color: '#fecaca', padding: '0.75rem', borderRadius: 6, marginBottom: '1rem' }}>
+          {error}
+        </div>
+      )}
 
       {result && (
         <>

@@ -1,4 +1,4 @@
-import { SimulationFrame, CheckpointInfo, RunRecord, EpisodeRecord } from '../types';
+import { SimulationFrame, CheckpointInfo, RunRecord, EpisodeRecord, ResultsSummary } from '../types';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '');
 
@@ -94,7 +94,7 @@ export async function comparePolicies(payload: { config?: any; seed: number; max
   return res.json();
 }
 
-export async function fetchResultsSummary(): Promise<{ summary_markdown: string; raw_data: any[] }> {
+export async function fetchResultsSummary(): Promise<ResultsSummary> {
   const res = await apiRequest('/api/results/summary', undefined, 'Fetch results summary');
   return res.json();
 }

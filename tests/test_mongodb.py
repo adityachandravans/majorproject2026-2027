@@ -73,6 +73,51 @@ def test_sqlite_fallback_migrates_legacy_runs_table(tmp_path, monkeypatch):
     logger.close()
 
 
+def test_sqlite_fallback_migrates_legacy_episode_loss_column(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MONGODB_REQUIRED", raising=False)
+    monkeypatch.setenv("MONGODB_DATABASE", "legacy_episodes")
+
+    def unavailable_client(*args, **kwargs):
+        raise RuntimeError("MongoDB unavailable")
+
+    monkeypatch.setattr("metrics_logging.db_logger.pymongo.MongoClient", unavailable_client)
+
+    conn = sqlite3.connect(tmp_path / "legacy_episodes.db")
+    conn.execute("""
+        CREATE TABLE episodes (
+            episode_id INTEGER PRIMARY KEY,
+            run_id TEXT,
+            episode_num INTEGER,
+            total_reward REAL,
+            avg_response_time REAL,
+            resource_utilization_rate REAL,
+            casualties_served INTEGER,
+            casualties_total INTEGER,
+            task_completion_rate REAL,
+            coordination_efficiency REAL,
+            medical_reward REAL,
+            rescue_reward REAL,
+            logistics_reward REAL
+        )
+    """)
+    conn.execute(
+        "INSERT INTO episodes(episode_id, run_id, episode_num) VALUES(?, ?, ?)",
+        (9, "old-run", 1)
+    )
+    conn.commit()
+    conn.close()
+
+    logger = DBLogger({"database": "legacy_episodes"})
+    assert logger.get_run_episodes("old-run").iloc[0]["casualties_lost"] == 0
+    logger.log_episode("new-run", 1, {"casualties_lost": 3})
+
+    saved_episode = logger.get_run_episodes("new-run").iloc[0]
+    assert saved_episode["episode_id"] == 10
+    assert saved_episode["casualties_lost"] == 3
+    logger.close()
+
+
 def test_sqlite_fallback_resumes_ids_after_existing_records(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("MONGODB_REQUIRED", raising=False)

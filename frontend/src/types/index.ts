@@ -93,3 +93,12 @@ export interface EpisodeRecord {
   rescue_reward: number;
   logistics_reward: number;
 }
+
+export interface EvaluationResult {
+  [metric: string]: string | number | null;
+}
+
+export interface ResultsSummary {
+  summary_markdown: string;
+  raw_data: EvaluationResult[];
+}

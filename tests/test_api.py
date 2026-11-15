@@ -150,6 +150,16 @@ def test_runs_api():
     assert res.status_code == 200
     assert isinstance(res.json(), list)
 
+
+def test_results_summary_includes_deployed_benchmark_data():
+    response = client.get("/api/results/summary")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["summary_markdown"]
+    assert data["raw_data"]
+    assert data["raw_data"][0]["policy"] in {"marl", "baseline", "random"}
+
+
 def test_websocket_stream():
     res = client.post("/api/simulations", json={"policy": "baseline", "seed": 42})
     sim_id = res.json()["sim_id"]

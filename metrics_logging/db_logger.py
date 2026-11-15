@@ -141,6 +141,14 @@ class DBLogger:
                 seq INTEGER NOT NULL DEFAULT 0
             )
         """)
+        episode_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(episodes)").fetchall()
+        }
+        if "casualties_lost" not in episode_columns:
+            conn.execute(
+                "ALTER TABLE episodes ADD COLUMN casualties_lost INTEGER NOT NULL DEFAULT 0"
+            )
+
         run_columns = {
             row["name"] for row in conn.execute("PRAGMA table_info(runs)").fetchall()
         }
