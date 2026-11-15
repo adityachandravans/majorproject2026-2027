@@ -35,6 +35,10 @@ _frontend_origins = [
     ).split(",")
     if origin.strip()
 ]
+_frontend_origin_regex = os.environ.get(
+    "FRONTEND_ORIGIN_REGEX",
+    r"^https://majorproject2026-2027-[a-z0-9-]+-aditya-chandravanshis-projects\.vercel\.app$"
+)
 
 sim_manager = SimulationManager()
 _default_cfg_path = "config/default_config.yaml"
@@ -285,6 +289,7 @@ if os.path.exists("frontend/dist"):
 app = CORSMiddleware(
     app=app,
     allow_origins=_frontend_origins,
+    allow_origin_regex=_frontend_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -36,6 +36,42 @@ def test_production_cors_preflight():
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "https://majorproject2026-2027.vercel.app"
 
+
+def test_vercel_preview_cors_preflight():
+    origin = "https://majorproject2026-2027-ihgg9m5xs-aditya-chandravanshis-projects.vercel.app"
+    response = client.options(
+        "/api/compare",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == origin
+
+
+def test_vercel_preview_can_read_backend_data():
+    origin = "https://majorproject2026-2027-ihgg9m5xs-aditya-chandravanshis-projects.vercel.app"
+    response = client.get("/api/config/default", headers={"Origin": origin})
+    assert response.status_code == 200
+    assert "environment" in response.json()
+    assert response.headers["access-control-allow-origin"] == origin
+
+
+def test_other_vercel_projects_are_not_allowed_by_preview_cors():
+    response = client.options(
+        "/api/compare",
+        headers={
+            "Origin": "https://other-project-ihgg9m5xs-aditya-chandravanshis-projects.vercel.app",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert response.status_code == 400
+    assert "access-control-allow-origin" not in response.headers
+
+
 def test_cors_header_is_present_on_server_errors(monkeypatch):
     def fail_create_simulation(*args, **kwargs):
         raise RuntimeError("simulated failure")
