@@ -150,6 +150,19 @@ class DBLogger:
             )
         if "seed" not in run_columns:
             conn.execute("ALTER TABLE runs ADD COLUMN seed INTEGER")
+
+        for counter_name, table_name, id_column in (
+            ("episode_id", "episodes", "episode_id"),
+            ("curve_id", "training_curve", "curve_id"),
+        ):
+            max_id = conn.execute(
+                f"SELECT COALESCE(MAX({id_column}), 0) FROM {table_name}"
+            ).fetchone()[0]
+            conn.execute(
+                "INSERT INTO counters(name, seq) VALUES(?, ?) "
+                "ON CONFLICT(name) DO UPDATE SET seq = MAX(seq, excluded.seq)",
+                (counter_name, max_id)
+            )
         conn.commit()
 
     def _next_sqlite_id(self, counter_name: str) -> int:

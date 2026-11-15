@@ -73,6 +73,37 @@ def test_sqlite_fallback_migrates_legacy_runs_table(tmp_path, monkeypatch):
     logger.close()
 
 
+def test_sqlite_fallback_resumes_ids_after_existing_records(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MONGODB_REQUIRED", raising=False)
+    monkeypatch.setenv("MONGODB_DATABASE", "existing_metrics")
+
+    def unavailable_client(*args, **kwargs):
+        raise RuntimeError("MongoDB unavailable")
+
+    monkeypatch.setattr("metrics_logging.db_logger.pymongo.MongoClient", unavailable_client)
+
+    logger = DBLogger({"database": "existing_metrics"})
+    logger._sqlite_conn.execute(
+        "INSERT INTO episodes(episode_id, run_id) VALUES(?, ?)",
+        (41, "existing-run")
+    )
+    logger._sqlite_conn.execute(
+        "INSERT INTO training_curve(curve_id, run_id) VALUES(?, ?)",
+        (23, "existing-run")
+    )
+    logger._sqlite_conn.commit()
+    logger.close()
+
+    logger = DBLogger({"database": "existing_metrics"})
+    logger.log_episode("new-run", 1, {})
+    logger.log_training_update("new-run", 1, 0.0, 0.0, 0.0, 0.0)
+
+    assert logger.get_run_episodes("new-run").iloc[0]["episode_id"] == 42
+    assert logger.get_training_curve("new-run").iloc[0]["curve_id"] == 24
+    logger.close()
+
+
 @pytest.fixture
 def mongo_logger():
     # Use a test database
